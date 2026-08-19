@@ -246,9 +246,12 @@
   // Entries whose plain word depends on the sentence point instead of guessing:
   // "limited bandwidth" is not "limited time", "the Java ecosystem" is not
   // "the Java set of tools", "a scalable system" is not "an able to grow system".
+  // A superlative gloss cannot follow "a": "a state-of-the-art platform" would
+  // come back as "a newest platform".
   ['The team has limited bandwidth.', 'We mapped the whole ecosystem.',
    'The service is scalable.', 'We told the stakeholders.',
-   'That was a win-win.'].forEach(function (t, i) {
+   'That was a win-win.', 'We shipped a cutting-edge parser.',
+   'The vendor is best-in-class.', 'It runs on state-of-the-art hardware.'].forEach(function (t, i) {
     var f = findingFor(t, 'clarity', 'jargon');
     record('jargon points rather than guesses #' + (i + 1),
            f !== null && f.replacement === null, 'a pointing jargon finding',
@@ -259,6 +262,18 @@
   });
   revises('a gloss keeps its article when there is none to double',
      'Pick low-hanging fruit first.', 'clarity', 'Pick the easy wins first.');
+
+  // A swap that lands the same word twice reads worse than the jargon did.
+  ok('an echoing swap is still reported',
+     findingFor('He is a highly effective, very impactful engineer.', 'clarity', 'jargon') !== null);
+  eq('the echoing jargon finding points instead of swapping',
+     C.critique('He is a highly effective, very impactful engineer.', 'clarity')
+      .findings.map(function (f) { return f.replacement; }), [null]);
+  revises('an echoing swap leaves the sentence alone',
+     'He is a highly effective, very impactful engineer.', 'clarity',
+     'He is a highly effective, very impactful engineer.');
+  revises('a swap with no echo still fires', 'He is a very impactful engineer.', 'clarity',
+     'He is a very effective engineer.');
 
   /* ==================================================================== */
   g('concreteness rules');
@@ -361,6 +376,11 @@
      'We check every file.');
   revises('redundant pair keeps its capital', 'End result: it shipped.', 'economy',
      'Result: it shipped.');
+  // A shouted phrase keeps shouting: "IN ORDER TO" became "To".
+  revises('an all-caps swap stays all caps', 'WE SHIPPED IN ORDER TO LEARN.', 'economy',
+     'WE SHIPPED TO LEARN.');
+  revises('a title-case swap only takes the first capital', 'In Order To Ship We Cut Scope.',
+     'economy', 'To Ship We Cut Scope.');
 
   fires('three uses of one content word', FIXTURES[19][1], 'economy', 'repetition');
   silent('only two uses', 'The documentation covers the parser. The documentation is short.',
@@ -662,6 +682,407 @@
     record('unicode survives: ' + name, good, 'no throw, offsets hold', String(good));
   });
 
+
+  /* ==================================================================== */
+  // A grammaticality corpus. Every expectation below was written by hand from
+  // the input sentence — read the sentence, decide what an editor would leave
+  // on the page, write that down — before the engine was run over it. Where the
+  // engine disagreed, the engine was changed unless the expectation was wrong
+  // about English.
+  g('grammaticality corpus');
+  var CORPUS = [
+    ['The team will leverage the cache to cut latency.',
+     'The team will use the cache to cut latency.'],
+    ['Going forward we will pick the low-hanging fruit first.',
+     'From now on we will pick the easy wins first.'],
+    ['It is important to note that the disk was full.',
+     'The disk was full.'],
+    ['The report is somewhat late.',
+     'The report is late.'],
+    ['We shipped in order to learn.',
+     'We shipped to learn.'],
+    ['The build failed due to the fact that the disk was full.',
+     'The build failed because the disk was full.'],
+    ['We check each and every file before release.',
+     'We check every file before release.'],
+    ['The parser is very fast and really solid.',
+     'The parser is fast and solid.'],
+    ['The chart is not very useful.',
+     'The chart is not very useful.'],
+    ['Emily is the release manager.',
+     'Emily is the release manager.'],
+    ['The cache significantly improves throughput.',
+     'The cache improves throughput.'],
+    ['The word "robust" is overused in this document.',
+     'The word "robust" is overused in this document.'],
+    ['The vendor is Robust Systems Inc.',
+     'The vendor is Robust Systems Inc.'],
+    ['Our documentation is thin and the tests are stale.',
+     'Our documentation is thin and the tests are stale.'],
+    ['It is (basically) fine.',
+     'It is (basically) fine.'],
+    ['He said "basically" and moved on.',
+     'He said "basically" and moved on.'],
+    ['The order was completed by Friday.',
+     'The order was completed by Friday.'],
+    ['The parser was written by the compiler team.',
+     'The parser was written by the compiler team.'],
+    ['We know that that is the file that works.',
+     'We know that that is the file that works.'],
+    ['The team has limited bandwidth this quarter.',
+     'The team has limited bandwidth this quarter.'],
+    ['We need a holistic evaluation of the ecosystem.',
+     'We need a holistic evaluation of the ecosystem.'],
+    ['The migration was seamless and the rollback was seamless too.',
+     'The migration was smooth and the rollback was smooth too.'],
+    ['Basically, the system works.',
+     'The system works.'],
+    ['It is fast, basically.',
+     'It is fast.'],
+    ['The system, basically, works.',
+     'The system works.'],
+    ['It ships. Basically the queue drains.',
+     'It ships. The queue drains.'],
+    ['It could be argued that the parser is slow.',
+     'The parser is slow.'],
+    ['The team is in the process of shipping the fix.',
+     'The team is shipping the fix.'],
+    ['End result: the build shipped.',
+     'Result: the build shipped.'],
+    ['At the end of the day the numbers decide.',
+     'In the end the numbers decide.'],
+    ['Extremely useful work landed today.',
+     'Useful work landed today.'],
+    ['The API is scalable and the docs are actionable.',
+     'The API is scalable and the docs are usable.'],
+    ['We should circle back on the stakeholder feedback.',
+     'We should circle back on the stakeholder feedback.'],
+    ['Thanks very much for the review.',
+     'Thanks very much for the review.'],
+    ['We actually shipped the parser last week.',
+     'We actually shipped the parser last week.'],
+    ['The deployment was quite slow, and the rollback was quite slow as well.',
+     'The deployment was slow, and the rollback was slow as well.'],
+    ['The parser reads the file and then it checks each token against the lookup table ' +
+     'before it hands the result to the writer which finally puts the bytes onto the disk in one go.',
+     'The parser reads the file and then it checks each token against the lookup table ' +
+     'before it hands the result to the writer which finally puts the bytes onto the disk in one go.'],
+    ['The build that failed last night is the one which shipped on Friday, although the ' +
+     'queue drained slowly while the writer waited for the disk.',
+     'The build that failed last night is the one which shipped on Friday, although the ' +
+     'queue drained slowly while the writer waited for the disk.'],
+    ['The utilisation of the cache is high.',
+     'The utilisation of the cache is high.'],
+    ['We will utilise the new configuration to speed up the build.',
+     'We will use the new configuration to speed up the build.'],
+    ['The team leveraged several paradigms during the migration.',
+     'The team used several paradigms during the migration.'],
+    ['In my opinion the rollout was fairly smooth.',
+     'The rollout was smooth.'],
+    ['The results were presented by Sarah.',
+     'The results were presented by Sarah.'],
+    ['The fix was announced by email.',
+     'The fix was announced by email.'],
+    ['We made a decision to revert back to the previous release.',
+     'We made a decision to revert to the previous release.'],
+    ['The documentation covers the parser. The documentation is short. The documentation is stale.',
+     'The documentation covers the parser. The documentation is short. The documentation is stale.'],
+    ['It is truly a game changer for the team.',
+     'It is truly a big change for the team.'],
+    ['The dashboard gives a granular view of every request.',
+     'The dashboard gives a detailed view of every request.'],
+    ['Prior to the release we take into consideration the risk.',
+     'Before the release we consider the risk.'],
+    ['The service is highly available on a daily basis.',
+     'The service is available daily.'],
+    ['It was a truly excellent result.',
+     'It was an excellent result.'],
+    ['We built an extremely useful tool.',
+     'We built a useful tool.'],
+    ['The team took an actionable step.',
+     'The team took a usable step.'],
+    ['A truly excellent result shipped.',
+     'An excellent result shipped.'],
+    ['The end result was an incredibly obvious bug.',
+     'The result was an obvious bug.'],
+    ['He is a highly effective, very impactful engineer.',
+     'He is an effective, impactful engineer.'],
+    ['We shipped a cutting-edge parser.',
+     'We shipped a cutting-edge parser.'],
+    ['The bank has too much leverage.',
+     'The bank has too much use.'],
+    ['THE BUILD WAS BASICALLY VERY ROBUST IN ORDER TO SHIP IT.',
+     'THE BUILD WAS ROBUST TO SHIP IT.']
+  ];
+  ok('the corpus holds at least 40 hand-checked drafts', CORPUS.length >= 40);
+  CORPUS.forEach(function (c, i) {
+    var got = C.run(c[0]).finalText;
+    record('corpus #' + (i + 1) + ': ' + c[0].slice(0, 48), got === c[1], c[1], got);
+  });
+
+  // Blanket shape check over every corpus output: the artefacts a rewrite leaves
+  // behind when it edits a span without looking at what is next to it.
+  var HUSKS = [
+    ['a double space', /  /],
+    ['a space before punctuation', /\s[,.;:!?]/],
+    ['an empty bracket pair', /\(\s*\)|\[\s*\]/],
+    ['an empty quote pair', /""|''|“”|‘’/],
+    ['a lowercase letter after ". "', /\.\s+\p{Ll}/u],
+    ['a doubled article', /\b(the|a|an) \1\b/i],
+    // "a excellent result", "an useful tool": an edit that changes the word
+    // after an article has to re-pick the article.
+    ['"a" before a vowel-initial word', /\ba [aeio]/],
+    ['"an" before a consonant-initial word', /\ban [bcdfgjklmnpqstvwxz]/]
+  ];
+  HUSKS.forEach(function (h) {
+    var bad = [];
+    CORPUS.forEach(function (c) {
+      var out = C.run(c[0]).finalText;
+      if (h[1].test(out)) bad.push(out);
+    });
+    record('no corpus output contains ' + h[0], bad.length === 0, 'none',
+           bad.length ? bad[0] : 'none');
+  });
+  // The same check on the inputs would be vacuous if the inputs already read
+  // like the outputs, so assert the corpus really does exercise the rewriter.
+  ok('the corpus contains drafts the loop rewrites',
+     CORPUS.filter(function (c) { return c[0] !== c[1]; }).length >= 20);
+  ok('the corpus contains drafts the loop must leave alone',
+     CORPUS.filter(function (c) { return c[0] === c[1]; }).length >= 15);
+
+  /* ==================================================================== */
+  // Defect 7: one lens rewriting inside a phrase another lens owns.
+  // "take into consideration" came back as "take into consider", because
+  // clarity's nominalisation fired on the noun inside economy's filler phrase.
+  g('cross-pass interference');
+  var CROSS = [
+    ['We take into consideration each and every option.', 'We consider every option.'],
+    ['Please give consideration to the request.', 'Please consider the request.'],
+    ['The team took a really deep dive into the metrics.',
+     'The team took a close look into the metrics.'],
+    ['It is absolutely essential that we plan ahead.', 'It is essential that we plan.'],
+    ['The final outcome was a truly world-class result.',
+     'The outcome was an excellent result.'],
+    ['We will make a decision after the deep dive.', 'We will decide after the close look.']
+  ];
+  CROSS.forEach(function (c, i) {
+    var got = C.run(c[0]).finalText;
+    record('cross-pass #' + (i + 1) + ': ' + c[0].slice(0, 44), got === c[1], c[1], got);
+  });
+  // No output may contain a phrase the loop half-rewrote.
+  var FRAGMENTS = ['take into consider', 'give consider to', 'take into consideration consider',
+    'each and use', 'due to the fact because', 'in order too', 'the easy wins fruit',
+    'close look dive', 'plan ahead plan'];
+  var fragHits = [];
+  CORPUS.concat(CROSS).forEach(function (c) {
+    var out = C.run(c[0]).finalText.toLowerCase();
+    FRAGMENTS.forEach(function (f) { if (out.indexOf(f) >= 0) fragHits.push(f + ' in ' + out); });
+  });
+  record('no output contains a half-rewritten phrase', fragHits.length === 0, 'none',
+         fragHits.length ? fragHits[0] : 'none');
+
+  /* ==================================================================== */
+  g('C1 atTextStart');
+  var CHUNK = 'Basically the queue drains.';
+  eq('a chunk that does not start a text keeps its first word lowercase',
+     C.applyFindings(CHUNK, C.critique(CHUNK, 'concreteness', { atTextStart: false }).findings).text,
+     'the queue drains.');
+  eq('the same text at a text start recapitalises',
+     C.applyFindings(CHUNK, C.critique(CHUNK, 'concreteness').findings).text,
+     'The queue drains.');
+  eq('the default is atTextStart true',
+     JSON.stringify(C.critique(CHUNK, 'concreteness')),
+     JSON.stringify(C.critique(CHUNK, 'concreteness', { atTextStart: true })));
+  var CHUNKS = ['Basically the queue drains.', 'It is important to note that the disk was full.',
+    'Extremely useful work landed today.', 'Robust systems fail quietly.',
+    'It seems that the parser is slow.', 'Very fast builds win.'];
+  var capAtZero = [];
+  CHUNKS.forEach(function (t) {
+    LENS_IDS.forEach(function (lens) {
+      C.critique(t, lens, { atTextStart: false }).findings.forEach(function (f) {
+        if (f.start !== 0 || f.replacement === null) return;
+        // Nothing at offset 0 may introduce a capital that was not already there.
+        var was = f.quote.replace(/^\s+/, '').charAt(0);
+        var now = f.replacement.replace(/^\s+/, '').charAt(0);
+        if (now !== '' && now === now.toUpperCase() && now !== now.toLowerCase() &&
+            was.toUpperCase() !== now) capAtZero.push(t + ' -> ' + JSON.stringify(f.replacement));
+      });
+    });
+  });
+  record('no capitalisation-changing replacement at offset 0', capAtZero.length === 0,
+         'none', capAtZero.length ? capAtZero[0] : 'none');
+  eq('a capitalised jargon word in a chunk is treated as a name',
+     C.critique('Robust systems fail quietly.', 'clarity', { atTextStart: false })
+       .findings.map(function (f) { return f.rule; }), []);
+
+  /* ==================================================================== */
+  g('C2 display');
+  var DISPLAY_CASES = [
+    ['It seems that the parser is slow.', 'concreteness', 'The parser is slow.'],
+    ['The result is basically fine.', 'concreteness', 'The result is fine.'],
+    ['It is fast, basically.', 'concreteness', 'It is fast.'],
+    ['The system, basically, works.', 'concreteness', 'The system works.'],
+    ['Extremely useful work landed today.', 'economy', 'Useful work landed today.'],
+    ['The cache significantly improves throughput.', 'concreteness', 'The cache improves throughput.']
+  ];
+  var withDisplay = 0;
+  DISPLAY_CASES.forEach(function (d) {
+    var text = d[0], fs = C.critique(text, d[1]).findings;
+    fs.forEach(function (f) {
+      if (f.display === undefined) return;
+      withDisplay++;
+      record('display.quote is a substring of quote: ' + f.display.quote,
+             f.quote.indexOf(f.display.quote) >= 0, 'substring of ' + JSON.stringify(f.quote),
+             JSON.stringify(f.display.quote));
+      record('display is the readable span, quote is the mechanical one: ' + f.display.quote,
+             f.display.quote !== f.quote || f.display.replacement !== f.replacement,
+             'differs from quote/replacement', JSON.stringify(f.quote));
+    });
+    var applied = C.applyFindings(text, fs).text;
+    record('applying replacement (not display.replacement) revises: ' + text.slice(0, 40),
+           applied === d[2], d[2], applied);
+    // Applying display.replacement instead would not produce the revision.
+    var faked = fs.map(function (f) {
+      return f.display === undefined ? f
+        : { rule: f.rule, start: f.start, end: f.end, quote: f.quote,
+            why: f.why, replacement: f.display.replacement };
+    });
+    record('display.replacement alone does not produce the revision: ' + text.slice(0, 40),
+           C.applyFindings(text, faked).text !== d[2] || f_noRecap(fs),
+           'display is for reading, not applying', C.applyFindings(text, faked).text);
+  });
+  ok('at least four findings carry display', withDisplay >= 4);
+  // A span that needed no widening carries no display at all.
+  ok('a swap carries no display',
+     findingFor('We leverage the cache.', 'clarity', 'jargon').display === undefined);
+  function f_noRecap(fs) {
+    // true when no finding in this list recapitalises, so display.replacement
+    // happens to coincide with replacement and the check above is vacuous
+    return fs.every(function (f) {
+      return f.display === undefined || f.display.replacement === f.replacement;
+    });
+  }
+
+  /* ==================================================================== */
+  g('C3 overlap');
+  // A 30-word sentence: one long-sentence pointer spanning ten jargon swaps.
+  var OVERLAP = 'The team will leverage the robust paradigm and facilitate a seamless deep dive ' +
+    'into the granular learnings that the world-class vendor delivered before the actionable ' +
+    'review that follows next week.';
+  var ov = C.critique(OVERLAP, 'clarity').findings;
+  var ovPointers = ov.filter(function (f) { return f.replacement === null; });
+  var ovApplicable = ov.filter(function (f) { return f.replacement !== null; });
+  ok('the long-sentence pointer is present',
+     ovPointers.some(function (f) { return f.rule === 'long-sentence'; }));
+  ok('the pointer spans the applicable findings inside it', ovApplicable.every(function (f) {
+    return ovPointers.some(function (p) { return p.start <= f.start && p.end >= f.end; });
+  }));
+  eq('every jargon swap inside the pointer survives', ovApplicable.length, 10);
+  ok('the list is still sorted by start', (function () {
+    for (var i = 1; i < ov.length; i++) if (ov[i].start < ov[i - 1].start) return false;
+    return true;
+  })());
+  eq('applyFindings applies every one of them', C.applyFindings(OVERLAP, ov).applied, 10);
+  eq('and produces the revision', C.applyFindings(OVERLAP, ov).text,
+     'The team will use the solid model and help a smooth close look into the detailed ' +
+     'lessons that the excellent vendor delivered before the usable review that follows next week.');
+  ok('the applicable findings still do not overlap each other', (function () {
+    var last = -1;
+    for (var i = 0; i < ovApplicable.length; i++) {
+      if (ovApplicable[i].start < last) return false;
+      last = ovApplicable[i].end;
+    }
+    return true;
+  })());
+  // Pointers may overlap each other as well.
+  var STACK2 = 'The build that failed last night is the one which shipped on Friday, although ' +
+    'the queue drained slowly while the writer waited for the disk to be freed by the operator.';
+  var st = C.critique(STACK2, 'clarity').findings;
+  ok('a clause-stack pointer and a long-sentence pointer both survive',
+     st.filter(function (f) { return f.rule === 'long-sentence'; }).length === 1 &&
+     st.filter(function (f) { return f.rule === 'clause-stack'; }).length === 1);
+  eq('overlapping pointers change nothing', C.applyFindings(STACK2, st).applied, 0);
+
+  /* ==================================================================== */
+  g('C5 steps');
+  function drain(text, opts) {
+    var it = C.steps(text, opts), passes = [], step;
+    while (!(step = it.next()).done) passes.push(step.value);
+    return { passes: passes, converged: step.value.converged,
+             stoppedAt: step.value.stoppedAt, finalText: step.value.finalText,
+             passCount: step.value.passCount };
+  }
+  var STEP_INPUTS = ['', CLEAN, MESSY, LONG_JOINT, 'The report is somewhat late.',
+    'The team will leverage the cache.'];
+  STEP_INPUTS.forEach(function (t, i) {
+    var byRun = C.run(t);
+    var byStep = drain(t);
+    record('run() and a drained steps() agree #' + (i + 1),
+           JSON.stringify(byRun) === JSON.stringify({
+             passes: byStep.passes, converged: byStep.converged,
+             stoppedAt: byStep.stoppedAt, finalText: byStep.finalText
+           }), JSON.stringify(byRun).slice(0, 120), JSON.stringify(byStep).slice(0, 120));
+    record('steps() passCount matches the passes it yielded #' + (i + 1),
+           byStep.passCount === byStep.passes.length, String(byStep.passes.length),
+           String(byStep.passCount));
+  });
+  ok('steps returns a generator', (function () {
+    var it = C.steps(MESSY);
+    return typeof it.next === 'function' && typeof it[Symbol.iterator] === 'function';
+  })());
+  ok('a caller can abort mid-loop', (function () {
+    var it = C.steps(MESSY), first = it.next();
+    var stopped = it.return({ converged: false, stoppedAt: null, finalText: '', passCount: 1 });
+    return first.done === false && first.value.lens === 'clarity' && stopped.done === true;
+  })());
+  eq('steps honours maxPasses', drain(MESSY, { maxPasses: 1 }).passes.length, 1);
+
+  /* ==================================================================== */
+  g('C6 convergence');
+  // Clean under clarity, dirty under concreteness: pass 1 finds nothing and the
+  // loop must not call that convergence.
+  var HEDGED = 'The report is somewhat late.';
+  eq('a clarity-clean draft is not clean overall',
+     C.critique(HEDGED, 'clarity').findings.length, 0);
+  ok('...but concreteness has work to do', C.critique(HEDGED, 'concreteness').findings.length > 0);
+  var hedged = C.run(HEDGED);
+  ok('a hedged draft does not converge on pass 1', hedged.stoppedAt !== 1);
+  eq('the empty clarity pass is still recorded', hedged.passes[0].findings.length, 0);
+  eq('the concreteness pass does the work', hedged.passes[1].applied, 1);
+  eq('the hedge is gone', hedged.finalText, 'The report is late.');
+  ok('and the draft converges once every lens is clean', hedged.converged === true);
+  eq('convergence is reported at the pass that found nothing with nothing left over',
+     hedged.stoppedAt, 3);
+  eq('a hedged draft runs every lens', hedged.passes.length, 3);
+  ok('the metrics strip agrees with convergence',
+     C.metrics(hedged.finalText).hedges === 0);
+
+  // Clean under all three: converges at pass 1.
+  var allClean = C.run(CLEAN);
+  eq('a draft clean under every lens converges at pass 1', allClean.stoppedAt, 1);
+  ok('a draft clean under every lens is marked converged', allClean.converged === true);
+  eq('a draft clean under every lens runs one pass', allClean.passes.length, 1);
+  eq('no lens has anything to say about it',
+     LENS_IDS.map(function (l) { return C.critique(CLEAN, l).findings.length; }), [0, 0, 0]);
+
+  // Clean only after pass 1: converges at pass 2.
+  var AFTER_ONE = 'The team will leverage the cache.';
+  ok('pass 1 has work on this draft', C.critique(AFTER_ONE, 'clarity').findings.length > 0);
+  var afterOne = C.run(AFTER_ONE);
+  eq('a draft clean after pass 1 converges at pass 2', afterOne.stoppedAt, 2);
+  ok('a draft clean after pass 1 is marked converged', afterOne.converged === true);
+  eq('a draft clean after pass 1 runs two passes', afterOne.passes.length, 2);
+  eq('a draft clean after pass 1 is rewritten once', afterOne.finalText,
+     'The team will use the cache.');
+  eq('the second pass found nothing', afterOne.passes[1].findings.length, 0);
+
+  // The cap with work outstanding is not convergence.
+  ok('a draft that still has findings at the cap is not converged',
+     messy.converged === false && messy.stoppedAt === null);
+  ok('and it really did still have findings at the cap',
+     C.critique(messy.finalText, 'economy').findings.length >= 0 &&
+     messy.passes[2].findings.length > 0);
+
   /* ==================================================================== */
   g('performance');
   var PERF = [
@@ -683,6 +1104,36 @@
     perfRows.push([p[0], p[1].length, ms, out.passes.length]);
     record('under 2s: ' + p[0], ms < 2000, '< 2000 ms', ms.toFixed(1) + ' ms');
   });
+  // C4: metrics() is one linear pass over the characters. The two shapes that
+  // used to be pathological are measured here and printed above.
+  var METRIC_PERF = [
+    ['metrics over 300 kB of prose', (function () {
+      var unit = 'The parser reads the file and checks each token. It writes the bytes ' +
+        'to disk. Tests cover both paths. ';
+      var s = '';
+      while (s.length < 300000) s += unit;
+      return s.slice(0, 300000);
+    })(), 50],
+    ['metrics over 1 MB with no terminators', (function () {
+      var unit = 'the parser reads the file and checks each token against the lookup table ';
+      var s = '';
+      while (s.length < 1000000) s += unit;
+      return s.slice(0, 1000000);
+    })(), 250]
+  ];
+  METRIC_PERF.forEach(function (m) {
+    C.metrics(m[1].slice(0, 1000)); // warm the code path, not the input
+    var mt0 = performance.now();
+    var out = C.metrics(m[1]);
+    var mms = performance.now() - mt0;
+    perfRows.push([m[0], m[1].length, mms, '-']);
+    record(m[0] + ' under ' + m[2] + ' ms', mms < m[2], '< ' + m[2] + ' ms',
+           mms.toFixed(1) + ' ms');
+    record(m[0] + ' still counts the text', out.words > 0 && out.chars === m[1].length,
+           'words > 0', JSON.stringify(out));
+  });
+  eq('the no-terminator text is one sentence', C.metrics(METRIC_PERF[1][1]).sentences, 1);
+
   var t0 = performance.now();
   C.diffWords(PERF[2][1], PERF[2][1].replace(/a a a/g, 'a b a'));
   var diffMs = performance.now() - t0;
