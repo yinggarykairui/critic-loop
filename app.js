@@ -21,6 +21,7 @@
 
   var els = {
     input: $('input'), counter: $('counter'), run: $('run'), stop: $('stop'), skip: $('skip'),
+    runbar: $('runbar'),
     status: $('status'), transcript: $('transcript'), emptyNote: $('empty-note'),
     section: $('transcript-section'),
     livePanel: $('live-panel'), key: $('api-key'), model: $('model'),
@@ -112,6 +113,15 @@
 
   var TAIL_MARGIN = 12;   /* px of viewport kept above the newest panel */
 
+  /* The run-control strip is fixed over the foot of the viewport while a run is in flight,
+     so the bottom of the usable viewport is that much higher while it is there. */
+  function bottomInset() {
+    var bar = els.runbar;
+    if (!bar || bar.hidden) return 0;
+    var r = bar.getBoundingClientRect();
+    return r.height || 0;
+  }
+
   function scrollNow() {
     return window.pageYOffset ||
       (document.documentElement && document.documentElement.scrollTop) || 0;
@@ -127,7 +137,7 @@
      margin, so the newest panel is never clipped by the top edge. */
   function scrollIntoTail(node) {
     if (!node || typeof node.getBoundingClientRect !== 'function') return;
-    var vh = window.innerHeight || 800;
+    var vh = (window.innerHeight || 800) - bottomInset();
     var r = node.getBoundingClientRect();
     var floor = vh - TAIL_MARGIN;
     var delta = 0;
@@ -156,7 +166,7 @@
     if (!state.running || !state.followTail) return;
     var last = els.transcript.lastElementChild;
     if (!last) return;
-    var vh = window.innerHeight || 800;
+    var vh = (window.innerHeight || 800) - bottomInset();
     var r = last.getBoundingClientRect();
     if (!(r.top >= 0 && r.bottom <= vh)) state.followTail = false;
   }
@@ -1034,14 +1044,14 @@
     els.run.disabled = busy;
     els.run.textContent = busy ? 'Running…' : 'Run';
     els.run.setAttribute('aria-busy', busy ? 'true' : 'false');
-    /* Stop is not shown at all until there is a run to stop. */
-    els.stop.hidden = !busy;
+    /* The strip carrying Stop and Skip exists only while there is a run to stop. */
+    els.runbar.hidden = !busy;
     els.stop.disabled = !busy;
     /* Read-only, not disabled: the text stays readable, selectable and copyable, but it
        cannot drift away from the draft 0 the transcript below was built from. */
     els.input.readOnly = busy;
     els.input.classList.toggle('is-locked', busy);
-    els.skip.hidden = !busy || reduceMotion;  /* nothing to skip when motion is already off */
+    els.skip.hidden = reduceMotion;  /* nothing to skip when motion is already off */
     for (s = 0; s < sampleButtons.length; s++) sampleButtons[s].disabled = busy;
     for (s = 0; s < engineRadios.length; s++) engineRadios[s].disabled = busy;
     /* Run disables itself, so keyboard focus has to go somewhere real. */
@@ -1275,5 +1285,6 @@
 
   updateCounter();
   els.livePanel.hidden = !isLive();
-  els.stop.hidden = true;
+  els.runbar.hidden = true;
+  els.skip.hidden = reduceMotion;
 })();

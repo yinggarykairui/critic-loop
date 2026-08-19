@@ -18,6 +18,11 @@
   --disabled-bg:   #efeee9;
   --disabled-text: #5f646b; /* 5.13 on disabled-bg */
 
+  /* The run-control strip is fixed to the foot of the viewport while a run is in
+     flight. This much room is left below the footer at all times, so the strip
+     appearing and disappearing never moves a pixel of the page. */
+  --runbar-space: 4.75rem;
+
   --radius: 3px;
   --pad: 1rem;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -58,7 +63,7 @@ body {
 .wrap {
   max-width: 44rem;
   margin: 0 auto;
-  padding: 1.5rem 1rem 3rem;
+  padding: 1.5rem 1rem calc(3rem + var(--runbar-space));
 }
 
 /* ---------- type ---------- */
@@ -201,6 +206,15 @@ textarea.is-locked { background: var(--disabled-bg); cursor: default; }
   outline: 3px solid var(--accent);
   outline-offset: 2px;
 }
+/* Run is the one control that is filled with the accent, so an accent ring on it is the
+   accent on itself. Two rings instead: the inner one is the button's own text colour,
+   which is measured against the fill it sits on, and the outer one is the page's text
+   colour, measured against the page behind it. Both are stated in the audit. */
+.btn-primary:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 3px var(--on-accent);
+}
 
 .status { font-size: 0.85rem; color: var(--muted); }
 .status.is-error { color: var(--del); }
@@ -208,6 +222,37 @@ textarea.is-locked { background: var(--disabled-bg); cursor: default; }
   content: "\25CF";
   margin-right: 0.35rem;
   color: var(--accent);
+}
+
+/* ---------- the run-control strip ----------
+   Stop and Skip are the two controls a reader needs at every moment of a run, and the
+   transcript scrolls away from them as it follows the newest panel. So they ride a strip
+   fixed to the foot of the viewport for as long as the run lasts: on screen at 320 and at
+   1200, at 80 ms and at the end, without the reader scrolling away from the transcript.
+   It is opaque, so its own contrast is measured against its own surface, and the page
+   already reserves its height (--runbar-space), so nothing under it is unreachable. */
+
+.runbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  justify-content: center;
+  background: var(--surface);
+  border-top: 2px solid var(--border);
+  padding: 0.5rem 1rem calc(0.5rem + env(safe-area-inset-bottom, 0px));
+}
+.runbar[hidden] { display: none; }
+
+.runbar-inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  width: 100%;
+  max-width: 42rem;
 }
 
 /* ---------- engine ---------- */
@@ -438,7 +483,7 @@ textarea.is-locked { background: var(--disabled-bg); cursor: default; }
 /* ---------- narrow ---------- */
 
 @media (max-width: 26rem) {
-  .wrap { padding: 0.75rem 0.75rem 2rem; }
+  .wrap { padding: 0.75rem 0.75rem calc(2rem + var(--runbar-space)); }
   h1 { font-size: 1.25rem; margin-bottom: 0.35rem; }
   .lede { font-size: 0.92rem; margin-bottom: 0.6rem; }
   .honesty { font-size: 0.86rem; margin-bottom: 0.85rem; padding-left: 0.6rem; }

@@ -34,9 +34,19 @@
 
     <div class="run-row">
       <button type="button" class="btn btn-primary" id="run">Run</button>
-      <button type="button" class="btn" id="stop" disabled hidden>Stop</button>
-      <button type="button" class="btn btn-quiet" id="skip" hidden>Skip animation</button>
       <span class="status" id="status" role="status" aria-live="polite"></span>
+    </div>
+
+    <!-- Stop and Skip live on a strip fixed to the foot of the viewport, so they stay on
+         screen for the whole run while the transcript below follows the newest panel.
+         They sit here in the source, right after Run, so the tab order is Run, Stop, Skip.
+         The strip is present only while a run is in flight; the space it needs is reserved
+         at the foot of the page at all times, so it never moves the layout. -->
+    <div class="runbar" id="runbar" role="group" aria-label="Controls for the run in progress" hidden>
+      <div class="runbar-inner">
+        <button type="button" class="btn btn-stop" id="stop" disabled>Stop</button>
+        <button type="button" class="btn btn-quiet" id="skip">Skip animation</button>
+      </div>
     </div>
 
     <div class="samples">
