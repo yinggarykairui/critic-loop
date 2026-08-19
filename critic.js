@@ -160,6 +160,11 @@
 
   /* ------------------------------------------------------------- edit shape */
 
+  // display.quote is what a human is shown, so it never carries the whitespace
+  // the mechanical span had to swallow: the panel renders it inside quotation
+  // marks, and “Perhaps ” reads as a typo.
+  var TRIM_ENDS_RE = /^\s+|\s+$/g;
+
   // display is optional: when the mechanical span had to swallow a neighbouring
   // space or letter, display carries the span a human would recognise. It is
   // never applied — applyFindings only ever uses quote/start/end/replacement.
@@ -236,7 +241,7 @@
         if (up !== c) {
           // The span now ends one letter into the next word, which reads as
           // nonsense in a list of edits: show the phrase and the space instead.
-          display = { quote: text.slice(s, k), replacement: '' };
+          display = { quote: text.slice(s, k).replace(TRIM_ENDS_RE, ''), replacement: '' };
           replacement = text.slice(end, k) + up;
           end = k + 1;
         }
@@ -262,11 +267,43 @@
   var TAKES_AN = new Set(['hour', 'hours', 'hourly', 'honest', 'honestly', 'honour',
     'honours', 'honor', 'honors', 'honourable', 'honorable', 'heir', 'heirs', 'heirloom']);
 
+  // Letters whose *name* opens with a vowel sound, so an initialism read letter
+  // by letter takes "an": ay, ee, ef, aitch, eye, el, em, en, oh, ar, es, ex.
+  // U ("you"), W ("double-you") and Y ("wye") are not here: "a URL", "a W3C
+  // note", "a Y combinator".
+  var AN_LETTERS = 'AEFHILMNORSX';
+
+  // How the leading digit group is read decides the article. Everything above
+  // 999 is read in thousand-groups, so only the leading group is spoken first:
+  // 8000 is "eight thousand" (an), 11,000 "eleven thousand" (an), 1100 "one
+  // thousand one hundred" (a). Nothing else opens with a vowel sound: eight,
+  // eighty, eight hundred, eleven and eighteen are the whole list.
+  function digitsWantAn(digits) {
+    while (digits.length > 3) digits = digits.slice(0, ((digits.length - 1) % 3) + 1);
+    if (digits.length === 1) return digits === '8';
+    if (digits.length === 2) return digits === '11' || digits === '18' || digits.charAt(0) === '8';
+    return digits.charAt(0) === '8';   // 800-899 "eight hundred", nothing else
+  }
+
+  var LEADING_DIGITS_RE = /^[\p{Nd}]+/u;
+  var ALL_CAPS_RE = /^\p{Lu}{2,}$/u;
+
+  // "a" or "an" is decided by sound, not spelling, and the head word arrives in
+  // four flavours the letter rule alone gets wrong: initialisms spelled out
+  // ("an FAQ", "a URL"), numerals ("an 8-bit palette", "a 1-to-1 mapping"),
+  // /ju:/ words ("a unique case") and silent h ("an hourly job"). A hyphenated
+  // or apostrophed head is decided by its first part, which is the part spoken
+  // first: "8-bit" is read "eight bit".
   function wantsAn(word) {
-    var lw = word.toLowerCase();
+    var w = String(word), cut = w.search(/[-–—'’]/);
+    if (cut > 0) w = w.slice(0, cut);
+    var digits = w.match(LEADING_DIGITS_RE);
+    if (digits) return digitsWantAn(digits[0]);
+    if (ALL_CAPS_RE.test(w)) return AN_LETTERS.indexOf(w.charAt(0)) >= 0;
+    var lw = w.toLowerCase();
     if (TAKES_AN.has(lw)) return true;
     if (TAKES_A.has(lw)) return false;
-    if (lw.slice(0, 2) === 'eu') return false;   // euphoric, European: /ju\u02d0/
+    if (lw.slice(0, 2) === 'eu') return false;   // euphoric, European: /juː/
     return 'aeiou'.indexOf(lw.charAt(0)) >= 0;
   }
 
@@ -291,33 +328,57 @@
     return m ? m[0] : null;
   }
 
+  // Returns { w, e }: the first word after offset i and where it ends, so the
+  // repair can widen the *displayed* span over that word too.
   function firstWordAfter(text, i) {
     var n = text.length, k = i;
     while (k < n && isSpace(text.charAt(k))) k++;
     var a = k;
     while (k < n && HAS_ALNUM_RE.test(text.charAt(k))) k++;
-    return k > a ? text.slice(a, k) : null;
+    return k > a ? { w: text.slice(a, k), e: k } : null;
   }
 
   // Runs over the findings that will actually be applied, in order, after the
   // overlap sweep. Widening a span leftwards over the article can never collide
   // with the finding before it: the repair is skipped when it would.
   function repairArticles(text, findings) {
-    var prevEnd = -1, i, f, art, head, have, want, fixed;
+    var prevEnd = -1, i, f, art, head, tailWord, have, want, fixed;
     for (i = 0; i < findings.length; i++) {
       f = findings[i];
       if (f.replacement === null) continue;
       art = articleBefore(text, f.start);
       if (art && art.s >= prevEnd) {
         head = firstWordOf(f.replacement);
-        if (head === null) head = firstWordAfter(text, f.end);
+        tailWord = null;
+        if (head === null) {
+          // A deletion puts no word of its own after the article: the head is
+          // the word already standing behind the span.
+          tailWord = firstWordAfter(text, f.end);
+          head = tailWord === null ? null : tailWord.w;
+        }
         if (head !== null) {
           have = text.slice(art.s, art.e).toLowerCase();
           want = wantsAn(head) ? 'an' : 'a';
           if (want !== have) {
             fixed = matchCapital(text.slice(art.s, art.e), want);
-            if (!f.display) f.display = { quote: f.quote, replacement: f.replacement };
-            f.replacement = fixed + text.slice(art.e, f.start) + f.replacement;
+            var repl = fixed + text.slice(art.e, f.start) + f.replacement;
+            // The mechanical span now opens at the article, so the readable one
+            // must open there too. A rewrite of the reader's text that no
+            // finding shows is exactly what this page exists not to do, so the
+            // display carries the article on both sides, and the head word with
+            // it when that word lives in the text rather than in the
+            // replacement: "an essentially unique" -> "a unique".
+            var dEnd = tailWord ? tailWord.e : f.end;
+            var dQuote = text.slice(art.s, dEnd).replace(TRIM_ENDS_RE, '');
+            var dRepl = (repl + text.slice(f.end, dEnd)).replace(TRIM_ENDS_RE, '');
+            // A swap already shows the article on both sides ("an actionable"
+            // -> "a usable"); display exists for the spans a human would not
+            // recognise, so it is dropped when it says the same thing twice.
+            if (dQuote === text.slice(art.s, f.end) && dRepl === repl) delete f.display;
+            else f.display = { quote: dQuote, replacement: dRepl };
+            f.why += ' That puts ' + q(head) + ' after the article, so ' +
+              q(text.slice(art.s, art.e)) + ' becomes ' + q(fixed) + '.';
+            f.replacement = repl;
             f.start = art.s;
             f.quote = text.slice(f.start, f.end);
           }

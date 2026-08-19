@@ -1084,6 +1084,144 @@
      messy.passes[2].findings.length > 0);
 
   /* ==================================================================== */
+  g('C7 articles');
+  var QO = '\u201c', QC = '\u201d';   // the quotation marks a why sentence uses
+  // "a" or "an" is decided by sound. Every expectation below was written by
+  // hand from how the head word is read aloud, not copied from the engine:
+  //   letters      the first sound of the word ("an engine", "a parser")
+  //   /juu/        u- and eu- words that open with a "y" ("a unique case",
+  //                "a European vendor") against the ones that do not
+  //                ("an unusual case")
+  //   silent h     "an hourly job", "an heir", against "a hotel"
+  //   initialisms  read letter by letter, so the *letter's name* decides:
+  //                A ay, E ee, F ef, H aitch, I eye, L el, M em, N en, O oh,
+  //                R ar, S es, X ex take "an"; B, C, D, G, J, K, P, Q, T, V, Z
+  //                and U/W ("you", "double-you") take "a"
+  //   numerals     how the leading number is read: eight, eighty, eighteen and
+  //                eleven open with a vowel, one/five/nine/a hundred do not,
+  //                and a hyphen ends the part spoken first ("an 8-bit palette",
+  //                "a 1-to-1 mapping")
+  var ARTICLE_CASES = [
+    ['apple', 'an'], ['engine', 'an'], ['index', 'an'], ['oven', 'an'], ['error', 'an'],
+    ['umbrella', 'an'],
+    ['table', 'a'], ['parser', 'a'], ['cache', 'a'], ['kernel', 'a'], ['ticket', 'a'],
+    ['disk', 'a'],
+    ['unique', 'a'], ['usable', 'a'], ['user', 'a'], ['unified', 'a'], ['uniform', 'a'],
+    ['universal', 'a'], ['utility', 'a'], ['ubiquitous', 'a'], ['European', 'a'],
+    ['euro', 'a'], ['usual', 'a'], ['one-off', 'a'],
+    ['unusual', 'an'], ['upgrade', 'an'], ['undo', 'an'],
+    ['hourly', 'an'], ['honest', 'an'], ['heir', 'an'], ['hour', 'an'],
+    ['house', 'a'], ['hotel', 'a'], ['header', 'a'],
+    // "an API": A is read "ay". The letter, not the word behind it, is what a
+    // reader says out loud.
+    ['API', 'an'], ['FAQ', 'an'], ['HTTP', 'an'], ['SLA', 'an'], ['MVP', 'an'],
+    ['NDA', 'an'], ['RFC', 'an'], ['SSL', 'an'], ['XML', 'an'], ['LED', 'an'],
+    ['FBI', 'an'], ['IDE', 'an'], ['HR', 'an'],
+    ['CSV', 'a'], ['URL', 'a'], ['UI', 'a'], ['W3C', 'a'], ['GPU', 'a'], ['JSON', 'a'],
+    ['PDF', 'a'], ['TCP', 'a'], ['VPN', 'a'],
+    ['8', 'an'], ['11', 'an'], ['18', 'an'], ['80', 'an'], ['85', 'an'], ['8000', 'an'],
+    ['11000', 'an'], ['8-bit', 'an'], ['18-month', 'an'],
+    ['1', 'a'], ['5', 'a'], ['15', 'a'], ['19', 'a'], ['90', 'a'], ['100', 'a'],
+    ['1000', 'a'], ['2026', 'a'], ['1-to-1', 'a']
+  ];
+  ok('the article table covers at least 30 hand-written cases', ARTICLE_CASES.length >= 30);
+  var articleShown = 0;
+  ARTICLE_CASES.forEach(function (c) {
+    var head = c[0], want = c[1], wrong = want === 'an' ? 'a' : 'an';
+    var goal = 'We shipped ' + want + ' ' + head + ' build.';
+    // The hedge goes; the article left standing in front of the head word has
+    // to be the right one afterwards.
+    var bad = 'We shipped ' + wrong + ' basically ' + head + ' build.';
+    var badFindings = C.critique(bad, 'concreteness').findings;
+    record('article repaired: ' + wrong + ' ' + head + ' -> ' + want + ' ' + head,
+           C.applyFindings(bad, badFindings).text === goal, goal,
+           C.applyFindings(bad, badFindings).text);
+    var good = 'We shipped ' + want + ' basically ' + head + ' build.';
+    var goodFindings = C.critique(good, 'concreteness').findings;
+    record('article kept: ' + want + ' ' + head,
+           C.applyFindings(good, goodFindings).text === goal, goal,
+           C.applyFindings(good, goodFindings).text);
+    // The rewrite used to happen with no finding to account for it.
+    var shown = null;
+    badFindings.forEach(function (f) {
+      var qq = f.display ? f.display.quote : f.quote;
+      var rr = f.display ? f.display.replacement : f.replacement;
+      if (String(qq).toLowerCase().indexOf(wrong + ' ') === 0) shown = { q: qq, r: rr, why: f.why };
+    });
+    var tells = shown !== null &&
+      String(shown.r).toLowerCase().indexOf(want + ' ') === 0 &&
+      shown.why.indexOf(QO + wrong + QC) > 0 &&
+      shown.why.indexOf(QO + want + QC) > 0;
+    if (tells) articleShown++;
+    record('the finding shows the article it changed: ' + wrong + ' ' + head,
+           tells, wrong + ' ... -> ' + want + ' ... plus a why that names both',
+           shown === null ? 'no finding quotes the article' :
+             JSON.stringify(shown.q) + ' -> ' + JSON.stringify(shown.r));
+    // The good case changes no article, so nothing may claim it did.
+    record('no article claim when the article was already right: ' + want + ' ' + head,
+           goodFindings.every(function (f) { return f.why.indexOf('after the article') < 0; }),
+           'no article sentence', JSON.stringify(goodFindings.map(function (f) { return f.why; })));
+  });
+  ok('every repaired article is visible in its finding', articleShown === ARTICLE_CASES.length);
+  // The repro strings from the re-vote gate, correct English before the loop
+  // ever saw them: the loop must hand them back byte for byte.
+  var CORRECT_ARTICLES = [
+    'It has an 8-bit palette.',
+    'It returns a URL-encoded value.',
+    'We reviewed an FAQ page.',
+    'The vendor signed an NDA.',
+    'The team wrote a 1-to-1 mapping.',
+    'She booked an 18-month contract.',
+    'He filed a unique ticket.',
+    'It runs an hourly job.',
+    'They picked a European host.',
+    'This is an unusual result.'
+  ];
+  CORRECT_ARTICLES.forEach(function (t) {
+    var out = C.run(t);
+    record('a correct draft comes back unchanged: ' + t, out.finalText === t, t, out.finalText);
+    LENS_IDS.forEach(function (lens) {
+      var fs = C.critique(t, lens).findings;
+      record('and no lens rewrites it: ' + lens + ' / ' + t.slice(0, 24),
+             C.applyFindings(t, fs).text === t, t, C.applyFindings(t, fs).text);
+    });
+  });
+  // The invariant behind those cases, over the whole fixture corpus: an article
+  // repair only ever rides along with an edit, so a draft the loop leaves alone
+  // can never come back with a different article.
+  ok('the article repair never fires on a draft the loop leaves unchanged',
+     FIXTURES.concat(CORRECT_ARTICLES.map(function (t) { return ['correct', t]; }))
+       .every(function (fx) {
+         return LENS_IDS.every(function (lens) {
+           var fs = C.critique(fx[1], lens).findings;
+           var applicable = fs.filter(function (f) { return f.replacement !== null; });
+           var out = C.applyFindings(fx[1], fs).text;
+           return applicable.length > 0 || out === fx[1];
+         });
+       }));
+  // A hedge at the head of a sentence used to display as "Perhaps " with the
+  // space inside the quotation marks.
+  var perhaps = findingFor('Perhaps the parser is fine.', 'concreteness', 'hedge');
+  eq('a sentence-initial hedge displays without its trailing space',
+     perhaps.display.quote, 'Perhaps');
+  eq('and the mechanical span is untouched', perhaps.quote, 'Perhaps t');
+  eq('and still applies', C.applyFindings('Perhaps the parser is fine.', [perhaps]).text,
+     'The parser is fine.');
+  ok('no display.quote anywhere carries edge whitespace', (function () {
+    var texts = FIXTURES.map(function (f) { return f[1]; })
+      .concat(['Perhaps the parser is fine.', 'It is an essentially unique case.',
+               'We shipped a basically FAQ build.']);
+    return texts.every(function (t) {
+      return LENS_IDS.every(function (lens) {
+        return C.critique(t, lens).findings.every(function (f) {
+          return f.display === undefined ||
+            (f.display.quote === f.display.quote.trim() && t.indexOf(f.display.quote) >= 0);
+        });
+      });
+    });
+  })());
+
+  /* ==================================================================== */
   g('performance');
   var PERF = [
     ['one 40,000-char word', 'x'.repeat(40000)],
