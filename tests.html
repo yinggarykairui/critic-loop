@@ -1,0 +1,616 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>critic.js — test suite</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+         margin: 0; padding: 24px; max-width: 76ch; }
+  h1 { font-size: clamp(28px, 7vw, 52px); margin: 0 0 4px; letter-spacing: -0.02em; }
+  h1.pass { color: #0a7d29; }
+  h1.fail { color: #c02020; }
+  h2 { font-size: 15px; margin: 28px 0 8px; text-transform: uppercase;
+       letter-spacing: 0.08em; opacity: 0.65; }
+  p.sub { margin: 0 0 8px; opacity: 0.7; }
+  ol { padding-left: 22px; }
+  li { margin-bottom: 10px; }
+  .name { color: #c02020; font-weight: 700; }
+  .kv { display: block; white-space: pre-wrap; word-break: break-word; opacity: 0.85; }
+  table { border-collapse: collapse; }
+  td { padding: 2px 14px 2px 0; }
+  .num { text-align: right; }
+  .ok { color: #0a7d29; }
+</style>
+</head>
+<body>
+<h1 id="headline">running…</h1>
+<p class="sub" id="subline"></p>
+<h2>Performance</h2>
+<table id="perf"></table>
+<h2 id="failhead" hidden>Failures</h2>
+<ol id="failures"></ol>
+<h2>Groups</h2>
+<table id="groups"></table>
+
+<script src="critic.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var C = window.CriticLoop;
+  var results = [];
+  var group = 'setup';
+
+  function g(name) { group = name; }
+  function record(name, pass, expected, actual) {
+    results.push({ name: name, pass: !!pass, group: group,
+                   expected: expected, actual: actual });
+  }
+  function ok(name, cond) { record(name, cond, 'true', String(!!cond)); }
+  function eq(name, actual, expected) {
+    var a = JSON.stringify(actual), e = JSON.stringify(expected);
+    record(name, a === e, e, a);
+  }
+  function throws(name, fn) {
+    var threw = false;
+    try { fn(); } catch (err) { threw = true; }
+    record(name, threw, 'throws', threw ? 'threw' : 'returned');
+  }
+
+  // --- rule helpers -------------------------------------------------------
+  function rulesOf(text, lens) {
+    return C.critique(text, lens).findings.map(function (f) { return f.rule; });
+  }
+  function fires(label, text, lens, rule) {
+    var hit = rulesOf(text, lens).indexOf(rule) >= 0;
+    record(rule + ' fires: ' + label, hit, 'contains ' + rule,
+           JSON.stringify(rulesOf(text, lens)));
+  }
+  function silent(label, text, lens, rule) {
+    var hit = rulesOf(text, lens).indexOf(rule) >= 0;
+    record(rule + ' silent: ' + label, !hit, 'no ' + rule,
+           JSON.stringify(rulesOf(text, lens)));
+  }
+  function revises(label, text, lens, expected) {
+    var r = C.critique(text, lens);
+    var out = C.applyFindings(text, r.findings).text;
+    record('revise: ' + label, out === expected, expected, out);
+  }
+  function findingFor(text, lens, rule) {
+    var fs = C.critique(text, lens).findings;
+    for (var i = 0; i < fs.length; i++) if (fs[i].rule === rule) return fs[i];
+    return null;
+  }
+
+  // --- fixtures used by the general invariants ----------------------------
+  var FIXTURES = [
+    ['empty', ''],
+    ['whitespace only', '   \n\t  '],
+    ['clean prose', 'The parser reads a file. It writes bytes to disk. Tests cover both paths.'],
+    ['messy prose', 'It is important to note that the implementation was basically very robust, ' +
+      'and in order to leverage each and every gain the team utilised several paradigms.'],
+    ['long sentence, no joint', 'The parser reads the file and then it checks each token against ' +
+      'the table before it hands the result to the writer which finally puts the bytes onto the disk in one go.'],
+    ['long sentence with joint', 'The parser reads the file line by line, and after that it checks ' +
+      'every token against the lookup table before handing the finished result to the writer process on disk.'],
+    ['zero width', 'The ​ implementation‎ was‏ basically‮ very robust.'],
+    ['combining marks', 'The débug leverage utilisé été was written by the téam.'],
+    ['CJK', '你好世界。这是测试。leverage 的 implementation。'],
+    ['RTL', 'مرحبا leverage بالعالم basically.'],
+    ['emoji', '🚀 It is very fast and basically robust 🔥 in order to ship.'],
+    ['one huge word', 'x'.repeat(4000)],
+    ['punctuation soup', '...!!! ??? ,,, ;;; --- ... !?!?'],
+    ['markup-looking', '<script>alert("very robust")<\/script> & <b>basically</b> fine.'],
+    ['newlines', 'First line is basically fine.\n\nSecond line was written by the parser.\nThird.'],
+    ['numbers', 'The cost was reduced by 40 percent in 2026, and 3 of 4 runs passed.'],
+    ['apostrophes', "The team’s implementation isn’t robust; it’s basically don’t-care code."],
+    ['hyphenation', 'This state-of-the-art low-hanging fruit is mission-critical and very well-known.'],
+    ['all caps', 'THE IMPLEMENTATION WAS BASICALLY VERY ROBUST IN ORDER TO LEVERAGE IT.'],
+    ['repeated word', 'The documentation covers the parser. The documentation is short. The documentation is stale.'],
+    ['single space', ' '],
+    ['no terminator', 'the implementation is basically very robust in order to leverage things']
+  ];
+  var LENS_IDS = ['clarity', 'concreteness', 'economy'];
+  var ALL_RULES = ['long-sentence', 'clause-stack', 'nominalisation', 'jargon',
+    'hedge', 'vague-quantifier', 'adverb-prop', 'passive-with-agent',
+    'filler-phrase', 'redundant-pair', 'repetition', 'very-intensifier'];
+
+  /* ==================================================================== */
+  g('contract');
+  ok('window.CriticLoop exists', C && typeof C === 'object');
+  ok('no stray globals introduced (CriticLoop only)',
+     typeof window.LENSES === 'undefined' && typeof window.critique === 'undefined' &&
+     typeof window.metrics === 'undefined' && typeof window.diffWords === 'undefined' &&
+     typeof window.applyFindings === 'undefined' && typeof window.run === 'undefined');
+  ok('LENSES is an array of 3', Array.isArray(C.LENSES) && C.LENSES.length === 3);
+  eq('LENSES ids in loop order', C.LENSES.map(function (l) { return l.id; }), LENS_IDS);
+  eq('LENSES names are title case', C.LENSES.map(function (l) { return l.name; }),
+     ['Clarity', 'Concreteness', 'Economy']);
+  ok('every lens has a one-sentence blurb', C.LENSES.every(function (l) {
+    return typeof l.blurb === 'string' && l.blurb.length > 20 &&
+           l.blurb.slice(-1) === '.' && l.blurb.split('. ').length === 1;
+  }));
+  ok('critique is a function', typeof C.critique === 'function');
+  ok('applyFindings is a function', typeof C.applyFindings === 'function');
+  ok('metrics is a function', typeof C.metrics === 'function');
+  ok('diffWords is a function', typeof C.diffWords === 'function');
+  ok('run is a function', typeof C.run === 'function');
+  eq('critique returns {lens, findings}', Object.keys(C.critique('hi', 'clarity')).sort(),
+     ['findings', 'lens']);
+  eq('critique echoes the lens id', C.critique('hi', 'economy').lens, 'economy');
+  throws('critique rejects an unknown lens', function () { C.critique('hi', 'nope'); });
+  throws('critique rejects a prototype key as a lens', function () { C.critique('hi', 'toString'); });
+  throws('critique rejects "constructor" as a lens', function () { C.critique('hi', 'constructor'); });
+  ok('critique tolerates non-string input', C.critique(null, 'clarity').findings.length === 0 &&
+     C.critique(undefined, 'clarity').findings.length === 0);
+
+  /* ==================================================================== */
+  g('clarity rules');
+  var LONG_NO_JOINT = FIXTURES[4][1];
+  var LONG_JOINT = FIXTURES[5][1];
+  fires('33-word sentence', LONG_NO_JOINT, 'clarity', 'long-sentence');
+  silent('19-word sentence', 'The parser reads the file and checks each token against the table before it writes the bytes to disk.',
+         'clarity', 'long-sentence');
+  eq('long-sentence with no safe joint proposes nothing',
+     findingFor(LONG_NO_JOINT, 'clarity', 'long-sentence').replacement, null);
+  ok('long-sentence why names the word count',
+     findingFor(LONG_NO_JOINT, 'clarity', 'long-sentence').why.indexOf('33 words') >= 0);
+  ok('long-sentence quotes the whole sentence when it cannot split',
+     findingFor(LONG_NO_JOINT, 'clarity', 'long-sentence').quote === LONG_NO_JOINT);
+  eq('long-sentence splits at ", and" into a full stop',
+     findingFor(LONG_JOINT, 'clarity', 'long-sentence').replacement, '. A');
+  revises('long sentence split at the joint', LONG_JOINT, 'clarity',
+    'The parser reads the file line by line. After that it checks every token against ' +
+    'the lookup table before handing the finished result to the writer process on disk.');
+  silent('joint too close to the edge, 30 words',
+     'Although the parser reads every single file that the crawler hands over, and the writer waits, the disk queue stays completely empty until then.',
+     'clarity', 'long-sentence');
+
+  fires('three subordinate markers',
+    'The build that failed is the one which shipped while the queue drained.', 'clarity', 'clause-stack');
+  silent('two subordinate markers',
+    'The build that failed is the one which shipped.', 'clarity', 'clause-stack');
+  eq('clause-stack only points', findingFor(
+    'The build that failed is the one which shipped while the queue drained.',
+    'clarity', 'clause-stack').replacement, null);
+
+  fires('implementation', 'The implementation took a week.', 'clarity', 'nominalisation');
+  silent('the plain verb', 'The team will build it in a week.', 'clarity', 'nominalisation');
+  eq('nominalisation swaps in the verb',
+     findingFor('The implementation took a week.', 'clarity', 'nominalisation').replacement, 'build');
+  eq('nominalisation keeps a leading capital',
+     findingFor('Implementation took a week.', 'clarity', 'nominalisation').replacement, 'Build');
+  revises('utilisation and optimisation', 'Utilisation of the optimisation is documentation.',
+     'clarity', 'Use of the speed up is docs.');
+
+  fires('leverage', 'We leverage the cache.', 'clarity', 'jargon');
+  silent('a word merely containing a buzzword', 'The robustness of the parser is measured.',
+     'clarity', 'jargon');
+  eq('jargon keeps a leading capital',
+     findingFor('Leverage the cache.', 'clarity', 'jargon').replacement, 'Use');
+  revises('multi-word jargon', 'Going forward we pick the low-hanging fruit.', 'clarity',
+     'From now on we pick the easy wins.');
+  revises('a gloss with an article does not double it up',
+     'The team told the stakeholders about the low-hanging fruit.', 'clarity',
+     'The team told the people affected about the easy wins.');
+  revises('a gloss keeps its article when there is none to double',
+     'Pick low-hanging fruit first.', 'clarity', 'Pick the easy wins first.');
+
+  /* ==================================================================== */
+  g('concreteness rules');
+  fires('somewhat', 'The parser is somewhat faster.', 'concreteness', 'hedge');
+  silent('"rather than" is a comparison', 'The team would rather than wait.', 'concreteness', 'hedge');
+  silent('"what kind of" is a question', 'What kind of file is this?', 'concreteness', 'hedge');
+  revises('mid-sentence hedge', 'The result is basically fine.', 'concreteness', 'The result is fine.');
+  revises('leading hedge recapitalises', 'Basically, the system works.', 'concreteness', 'The system works.');
+  revises('trailing hedge takes its comma', 'It is fast, basically.', 'concreteness', 'It is fast.');
+  revises('parenthetical hedge takes both commas', 'The system, basically, works.',
+     'concreteness', 'The system works.');
+  revises('hedge after a full stop recapitalises', 'It ships. Basically the queue drains.',
+     'concreteness', 'It ships. The queue drains.');
+  revises('multi-word hedge', 'It could be argued that the parser is slow.', 'concreteness',
+     'The parser is slow.');
+
+  fires('several', 'The parser handles several files.', 'concreteness', 'vague-quantifier');
+  fires('a number of', 'A number of files failed.', 'concreteness', 'vague-quantifier');
+  silent('an actual number', 'The parser handles three files.', 'concreteness', 'vague-quantifier');
+  eq('vague-quantifier never proposes a swap',
+     findingFor('The parser handles several files.', 'concreteness', 'vague-quantifier').replacement, null);
+  ok('vague-quantifier why asks for the number',
+     findingFor('The parser handles several files.', 'concreteness', 'vague-quantifier')
+       .why.indexOf('how many') >= 0);
+
+  fires('significantly improves', 'The cache significantly improves throughput.',
+     'concreteness', 'adverb-prop');
+  silent('"only" is not an adverb here', 'The report only has three pages.',
+     'concreteness', 'adverb-prop');
+  silent('"early" is not an adverb here', 'The build early is the fastest.',
+     'concreteness', 'adverb-prop');
+  silent('adverb before a strong verb', 'The team quickly shipped the parser.',
+     'concreteness', 'adverb-prop');
+  revises('adverb before a weak verb is cut', 'The cache significantly improves throughput.',
+     'concreteness', 'The cache improves throughput.');
+
+  fires('was written by the compiler', 'The parser was written by the compiler.',
+     'concreteness', 'passive-with-agent');
+  fires('irregular participle', 'The report is run by the scheduler.',
+     'concreteness', 'passive-with-agent');
+  silent('already active', 'The compiler wrote the parser.', 'concreteness', 'passive-with-agent');
+  silent('"by" introducing a quantity', 'The cost was reduced by 40 percent.',
+     'concreteness', 'passive-with-agent');
+  silent('"by the way" is not an agent', 'The fix was shipped by the way.',
+     'concreteness', 'passive-with-agent');
+  silent('no agent at all', 'The parser was rewritten last week.',
+     'concreteness', 'passive-with-agent');
+  eq('passive-with-agent only points',
+     findingFor('The parser was written by the compiler.', 'concreteness', 'passive-with-agent').replacement, null);
+  ok('passive-with-agent why names the agent',
+     findingFor('The parser was written by the compiler.', 'concreteness', 'passive-with-agent')
+       .why.indexOf('the compiler') >= 0);
+
+  /* ==================================================================== */
+  g('economy rules');
+  fires('in order to', 'We shipped in order to learn.', 'economy', 'filler-phrase');
+  silent('"in order" cut by a comma', 'In order, the items were sorted.', 'economy', 'filler-phrase');
+  revises('in order to becomes to', 'We shipped in order to learn.', 'economy', 'We shipped to learn.');
+  revises('leading filler recapitalises', 'In order to ship we cut scope.', 'economy',
+     'To ship we cut scope.');
+  revises('deleting filler recapitalises', 'It is important to note that the build fails.',
+     'economy', 'The build fails.');
+  revises('mid-sentence filler deleted', 'The team is in the process of shipping.', 'economy',
+     'The team is shipping.');
+  revises('due to the fact that', 'It failed due to the fact that the disk was full.', 'economy',
+     'It failed because the disk was full.');
+
+  fires('each and every', 'We check each and every file.', 'economy', 'redundant-pair');
+  silent('"each of" is not a pair', 'We check each of the files.', 'economy', 'redundant-pair');
+  revises('redundant pair collapses', 'We check each and every file.', 'economy',
+     'We check every file.');
+  revises('redundant pair keeps its capital', 'End result: it shipped.', 'economy',
+     'Result: it shipped.');
+
+  fires('three uses of one content word', FIXTURES[19][1], 'economy', 'repetition');
+  silent('only two uses', 'The documentation covers the parser. The documentation is short.',
+     'economy', 'repetition');
+  silent('short and stop words do not count', 'This is a test. This is a test. This is a test.',
+     'economy', 'repetition');
+  ok('repetition why names the word and the count',
+     findingFor(FIXTURES[19][1], 'economy', 'repetition').why.indexOf('appears 3 times') >= 0);
+  eq('repetition only points',
+     findingFor(FIXTURES[19][1], 'economy', 'repetition').replacement, null);
+
+  fires('very before an adjective', 'The parser is very fast.', 'economy', 'very-intensifier');
+  silent('"very much" is not an adjective', 'Thanks very much for the review.',
+     'economy', 'very-intensifier');
+  silent('"actually" before a verb', 'We actually shipped the parser.',
+     'economy', 'very-intensifier');
+  revises('intensifiers are cut', 'It is very fast and really solid.', 'economy',
+     'It is fast and solid.');
+  revises('leading intensifier recapitalises', 'Extremely useful work landed today.', 'economy',
+     'Useful work landed today.');
+
+  ok('every shipped rule id is covered by the suite', (function () {
+    var seen = {};
+    results.forEach(function (r) {
+      ALL_RULES.forEach(function (rule) {
+        if (r.name.indexOf(rule + ' fires:') === 0) seen[rule + ':fire'] = true;
+        if (r.name.indexOf(rule + ' silent:') === 0) seen[rule + ':miss'] = true;
+      });
+    });
+    return ALL_RULES.every(function (rule) {
+      return seen[rule + ':fire'] && seen[rule + ':miss'];
+    });
+  })());
+
+  /* ==================================================================== */
+  g('invariants over every fixture');
+  FIXTURES.forEach(function (fx) {
+    var name = fx[0], text = fx[1];
+    var offsetsHold = true, sorted = true, disjoint = true, shaped = true, known = true;
+    var lastEnd = -1;
+    LENS_IDS.forEach(function (lens) {
+      var fs;
+      try { fs = C.critique(text, lens).findings; }
+      catch (err) { shaped = false; return; }
+      lastEnd = -1;
+      var prevStart = -1;
+      fs.forEach(function (f) {
+        if (text.slice(f.start, f.end) !== f.quote) offsetsHold = false;
+        if (f.start < prevStart) sorted = false;
+        if (f.start < lastEnd) disjoint = false;
+        prevStart = f.start;
+        lastEnd = f.end;
+        if (typeof f.rule !== 'string' || typeof f.ruleName !== 'string' ||
+            typeof f.start !== 'number' || typeof f.end !== 'number' ||
+            typeof f.quote !== 'string' || typeof f.why !== 'string' ||
+            !(f.replacement === null || typeof f.replacement === 'string')) shaped = false;
+        if (ALL_RULES.indexOf(f.rule) < 0) known = false;
+        if (f.why.split(/[.!?]\s/).length !== 1) shaped = false;
+        if (/\bwe\b/i.test(f.why)) shaped = false;
+      });
+    });
+    record('offsets hold: ' + name, offsetsHold, 'slice === quote', String(offsetsHold));
+    record('sorted by start: ' + name, sorted, 'ascending', String(sorted));
+    record('non-overlapping: ' + name, disjoint, 'disjoint', String(disjoint));
+    record('finding shape: ' + name, shaped, 'well formed', String(shaped));
+    record('rule ids known: ' + name, known, 'all in ALL_RULES', String(known));
+  });
+
+  /* ==================================================================== */
+  g('applyFindings');
+  var applyText = 'The parser handles several files that were written by the compiler.';
+  var pointOnly = C.critique(applyText, 'concreteness').findings;
+  ok('fixture produces only pointing findings',
+     pointOnly.length > 0 && pointOnly.every(function (f) { return f.replacement === null; }));
+  eq('pointing findings change nothing',
+     C.applyFindings(applyText, pointOnly), { text: applyText, applied: 0 });
+  eq('empty findings list is a no-op', C.applyFindings('unchanged text', []),
+     { text: 'unchanged text', applied: 0 });
+  var mutText = 'It is important to note that we leverage each and every gain.';
+  var mutFindings = C.critique(mutText, 'economy').findings;
+  var beforeJSON = JSON.stringify(mutFindings);
+  var appliedOut = C.applyFindings(mutText, mutFindings);
+  eq('applyFindings does not mutate the findings it is given',
+     JSON.stringify(mutFindings), beforeJSON);
+  ok('applied count matches the replaceable findings',
+     appliedOut.applied === mutFindings.filter(function (f) { return f.replacement !== null; }).length);
+  ok('applyFindings leaves its input string alone',
+     mutText === 'It is important to note that we leverage each and every gain.');
+  var shuffled = mutFindings.slice().reverse();
+  eq('order of the input list does not matter',
+     C.applyFindings(mutText, shuffled).text, appliedOut.text);
+  eq('applyFindings ignores out-of-range spans', C.applyFindings('abc',
+     [{ rule: 'x', start: 10, end: 20, quote: '', why: '', replacement: 'Z' }]),
+     { text: 'abc', applied: 0 });
+
+  /* ==================================================================== */
+  g('metrics');
+  eq('empty text', C.metrics(''),
+     { words: 0, sentences: 0, meanSentenceLength: 0, hedges: 0, chars: 0 });
+  eq('whitespace only', C.metrics('   '),
+     { words: 0, sentences: 0, meanSentenceLength: 0, hedges: 0, chars: 3 });
+  eq('no terminator counts as one sentence', C.metrics('hello there world'),
+     { words: 3, sentences: 1, meanSentenceLength: 3, hedges: 0, chars: 17 });
+  eq('three sentences', C.metrics('One. Two. Three.'),
+     { words: 3, sentences: 3, meanSentenceLength: 1, hedges: 0, chars: 16 });
+  eq('mean rounds to one decimal',
+     C.metrics('The parser reads a file. It writes bytes to disk. Tests cover both paths.').meanSentenceLength, 4.7);
+  eq('hedges are counted', C.metrics('It is somewhat basically fast.').hedges, 2);
+  eq('blocked hedges are not counted', C.metrics('The team would rather than wait.').hedges, 0);
+  eq('punctuation-only tokens are not words', C.metrics('--- ... !!!').words, 0);
+  eq('chars is the raw string length', C.metrics('🚀').chars, 2);
+  eq('emoji is not a word', C.metrics('🚀').words, 0);
+  eq('digits count as words', C.metrics('40 percent').words, 2);
+  ok('metrics tolerates null', C.metrics(null).chars === 0);
+
+  /* ==================================================================== */
+  g('diffWords');
+  var DIFF_PAIRS = [
+    ['both empty', '', ''],
+    ['pure insertion', '', 'hello world'],
+    ['pure deletion', 'hello world', ''],
+    ['identical', 'same text here', 'same text here'],
+    ['one word swapped', 'the quick brown fox', 'the slow brown fox'],
+    ['interleaved deletions', 'a b c d e', 'a c e'],
+    ['whitespace shifted', '  leading spaces here', 'leading spaces here  '],
+    ['newlines reordered', 'one\ntwo\nthree', 'one\nthree\ntwo'],
+    ['accents dropped', 'naïve café open', 'naive cafe open'],
+    ['CJK appended', '你好 世界', '你好 世界 再见'],
+    ['tabs and runs', 'a\t\tb   c', 'a b c'],
+    ['a real revision', 'It is important to note that we leverage each and every gain.',
+      'We use every gain.']
+  ];
+  DIFF_PAIRS.forEach(function (p) {
+    var name = p[0], a = p[1], b = p[2];
+    var d = C.diffWords(a, b);
+    var left = '', right = '', typesOK = true;
+    d.forEach(function (seg) {
+      if (seg.type !== 'same' && seg.type !== 'del' && seg.type !== 'ins') typesOK = false;
+      if (typeof seg.text !== 'string') typesOK = false;
+      if (seg.type === 'same' || seg.type === 'del') left += seg.text;
+      if (seg.type === 'same' || seg.type === 'ins') right += seg.text;
+    });
+    record('diff reconstructs a: ' + name, left === a, JSON.stringify(a), JSON.stringify(left));
+    record('diff reconstructs b: ' + name, right === b, JSON.stringify(b), JSON.stringify(right));
+    record('diff segment types: ' + name, typesOK, 'same|del|ins with string text', String(typesOK));
+  });
+  eq('identical input yields one same run',
+     C.diffWords('same text here', 'same text here'),
+     [{ type: 'same', text: 'same text here' }]);
+  eq('empty pair yields no segments', C.diffWords('', ''), []);
+  ok('adjacent segments of a type are merged', (function () {
+    var d = C.diffWords('a b c d e', 'a c e');
+    for (var i = 1; i < d.length; i++) if (d[i].type === d[i - 1].type) return false;
+    return true;
+  })());
+  var bigA = new Array(3001).join('alpha ') , bigB = new Array(3001).join('beta ');
+  var capped = C.diffWords(bigA, bigB);
+  eq('over 2500 tokens degrades to a wholesale replace',
+     capped.map(function (s) { return s.type; }), ['del', 'ins']);
+  ok('the wholesale replace still round-trips',
+     capped[0].text === bigA && capped[1].text === bigB);
+  ok('diffWords tolerates null', C.diffWords(null, null).length === 0);
+
+  /* ==================================================================== */
+  g('run');
+  var CLEAN = FIXTURES[2][1];
+  var clean = C.run(CLEAN);
+  eq('clean text converges on pass 1', clean.stoppedAt, 1);
+  ok('clean text is marked converged', clean.converged === true);
+  eq('clean text records exactly one pass', clean.passes.length, 1);
+  eq('the converged pass has no findings', clean.passes[0].findings, []);
+  eq('the converged pass applied nothing', clean.passes[0].applied, 0);
+  ok('the converged pass leaves the text alone',
+     clean.passes[0].after === clean.passes[0].before);
+  eq('finalText is the input when nothing fires', clean.finalText, CLEAN);
+  ok('metricsBefore and metricsAfter agree on a converged pass',
+     JSON.stringify(clean.passes[0].metricsBefore) === JSON.stringify(clean.passes[0].metricsAfter));
+
+  var MESSY = 'The implementation was basically very robust in order to leverage each and every gain.';
+  var messy = C.run(MESSY);
+  eq('a draft that never converges runs three passes', messy.passes.length, 3);
+  ok('a draft that never converges is not marked converged', messy.converged === false);
+  eq('stoppedAt is null when nothing converged', messy.stoppedAt, null);
+  eq('pass lenses follow LENSES order',
+     messy.passes.map(function (p) { return p.lens; }), LENS_IDS);
+  eq('pass indexes are zero-based and sequential',
+     messy.passes.map(function (p) { return p.index; }), [0, 1, 2]);
+  eq('pass lensName matches the lens',
+     messy.passes.map(function (p) { return p.lensName; }), ['Clarity', 'Concreteness', 'Economy']);
+  ok('each pass starts where the last one ended', (function () {
+    for (var i = 1; i < messy.passes.length; i++) {
+      if (messy.passes[i].before !== messy.passes[i - 1].after) return false;
+    }
+    return true;
+  })());
+  eq('finalText is the last pass output', messy.finalText,
+     messy.passes[messy.passes.length - 1].after);
+  eq('the loop actually shortens this draft', messy.finalText,
+     'The build was solid to use every gain.');
+  ok('word count falls across the run',
+     messy.passes[2].metricsAfter.words < messy.passes[0].metricsBefore.words);
+  eq('every pass carries the required keys',
+     Object.keys(messy.passes[0]).sort(),
+     ['after', 'applied', 'before', 'findings', 'index', 'lens', 'lensName',
+      'metricsAfter', 'metricsBefore'].sort());
+  eq('maxPasses caps the loop', C.run(MESSY, { maxPasses: 1 }).passes.length, 1);
+  ok('maxPasses 1 leaves the draft mid-flight',
+     C.run(MESSY, { maxPasses: 1 }).finalText === messy.passes[0].after);
+  eq('maxPasses 0 does nothing', C.run(MESSY, { maxPasses: 0 }).passes.length, 0);
+  eq('maxPasses 0 returns the input', C.run(MESSY, { maxPasses: 0 }).finalText, MESSY);
+  eq('maxPasses above 3 is clamped to the lens count',
+     C.run(MESSY, { maxPasses: 99 }).passes.length, 3);
+  eq('empty input converges immediately', C.run('').stoppedAt, 1);
+  ok('run tolerates null', C.run(null).finalText === '');
+
+  g('determinism');
+  ['', MESSY, CLEAN, FIXTURES[6][1], FIXTURES[10][1], LONG_JOINT].forEach(function (t, i) {
+    var a = JSON.stringify(C.run(t));
+    var b = JSON.stringify(C.run(t));
+    record('run is byte-identical on repeat #' + (i + 1), a === b, 'identical',
+           a === b ? 'identical' : 'diverged');
+  });
+  ok('critique is byte-identical on repeat',
+     JSON.stringify(C.critique(MESSY, 'economy')) === JSON.stringify(C.critique(MESSY, 'economy')));
+  ok('applyFindings is byte-identical on repeat',
+     C.applyFindings(MESSY, C.critique(MESSY, 'clarity').findings).text ===
+     C.applyFindings(MESSY, C.critique(MESSY, 'clarity').findings).text);
+
+  g('unicode safety');
+  var UNI = [
+    ['zero-width joiners', 'The​ implementation‌ was‍ basically robust.'],
+    ['bidi controls', '‮The implementation‬ was very robust.'],
+    ['combining marks', 'Débug the implementation été basically.'],
+    ['CJK mixed', '实现 implementation 是 basically 快。'],
+    ['RTL mixed', 'التنفيذ implementation هو basically.'],
+    ['astral plane', '🚀🔥 The implementation is very robust 🧪.'],
+    ['NBSP', 'The implementation is basically robust.'],
+    ['lone surrogate-ish', 'The implementation � is basically robust.']
+  ];
+  UNI.forEach(function (u) {
+    var name = u[0], text = u[1], good = true;
+    try {
+      LENS_IDS.forEach(function (lens) {
+        C.critique(text, lens).findings.forEach(function (f) {
+          if (text.slice(f.start, f.end) !== f.quote) good = false;
+        });
+      });
+      var out = C.run(text);
+      C.metrics(text);
+      C.diffWords(text, out.finalText).forEach(function (s) { if (typeof s.text !== 'string') good = false; });
+    } catch (err) { good = false; }
+    record('unicode survives: ' + name, good, 'no throw, offsets hold', String(good));
+  });
+
+  /* ==================================================================== */
+  g('performance');
+  var PERF = [
+    ['one 40,000-char word', 'x'.repeat(40000)],
+    ['300 kB of prose', (function () {
+      var unit = 'It is important to note that the implementation was basically very robust, ' +
+        'and in order to leverage several paradigms the team utilised each and every gain. ';
+      var s = '';
+      while (s.length < 300000) s += unit;
+      return s.slice(0, 300000);
+    })()],
+    ['50,000 repetitions of "a "', new Array(50001).join('a ')]
+  ];
+  var perfRows = [];
+  PERF.forEach(function (p) {
+    var t0 = performance.now();
+    var out = C.run(p[1]);
+    var ms = performance.now() - t0;
+    perfRows.push([p[0], p[1].length, ms, out.passes.length]);
+    record('under 2s: ' + p[0], ms < 2000, '< 2000 ms', ms.toFixed(1) + ' ms');
+  });
+  var t0 = performance.now();
+  C.diffWords(PERF[2][1], PERF[2][1].replace(/a a a/g, 'a b a'));
+  var diffMs = performance.now() - t0;
+  perfRows.push(['diffWords over the capped input', PERF[2][1].length, diffMs, '-']);
+  record('under 2s: diffWords past the token cap', diffMs < 2000, '< 2000 ms', diffMs.toFixed(1) + ' ms');
+
+  /* ==================================================================== */
+  // ---- report ----------------------------------------------------------
+  var passed = results.filter(function (r) { return r.pass; }).length;
+  var total = results.length;
+  var head = document.getElementById('headline');
+  head.textContent = passed + '/' + total + ' passing';
+  head.className = passed === total ? 'pass' : 'fail';
+  document.getElementById('subline').textContent =
+    passed === total
+      ? 'critic.js — every assertion green.'
+      : (total - passed) + ' failing assertion(s) below.';
+
+  var perfTable = document.getElementById('perf');
+  perfRows.forEach(function (row) {
+    var tr = document.createElement('tr');
+    [row[0], row[1] + ' chars', (typeof row[2] === 'number' ? row[2].toFixed(1) + ' ms' : row[2]),
+     (row[3] === '-' ? '' : row[3] + ' pass(es)')].forEach(function (cell, i) {
+      var td = document.createElement('td');
+      td.textContent = cell;
+      if (i > 0) td.className = 'num';
+      tr.appendChild(td);
+    });
+    perfTable.appendChild(tr);
+  });
+
+  var list = document.getElementById('failures');
+  results.filter(function (r) { return !r.pass; }).forEach(function (r) {
+    var li = document.createElement('li');
+    var n = document.createElement('span');
+    n.className = 'name';
+    n.textContent = '[' + r.group + '] ' + r.name;
+    li.appendChild(n);
+    var e = document.createElement('span');
+    e.className = 'kv';
+    e.textContent = 'expected: ' + String(r.expected);
+    li.appendChild(e);
+    var a = document.createElement('span');
+    a.className = 'kv';
+    a.textContent = 'actual:   ' + String(r.actual);
+    li.appendChild(a);
+    list.appendChild(li);
+  });
+  if (passed !== total) document.getElementById('failhead').hidden = false;
+
+  var groups = {};
+  results.forEach(function (r) {
+    if (!groups[r.group]) groups[r.group] = { pass: 0, total: 0 };
+    groups[r.group].total++;
+    if (r.pass) groups[r.group].pass++;
+  });
+  var gt = document.getElementById('groups');
+  Object.keys(groups).forEach(function (name) {
+    var tr = document.createElement('tr');
+    var td1 = document.createElement('td'); td1.textContent = name;
+    var td2 = document.createElement('td'); td2.className = 'num' +
+      (groups[name].pass === groups[name].total ? ' ok' : ' name');
+    td2.textContent = groups[name].pass + '/' + groups[name].total;
+    tr.appendChild(td1); tr.appendChild(td2); gt.appendChild(tr);
+  });
+})();
+</script>
+</body>
+</html>
