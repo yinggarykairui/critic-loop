@@ -330,8 +330,38 @@
      own node, so concatenating the text nodes of a diff rebuilds the drafts byte for
      byte: same + del is the draft before, same + ins is the draft after. Nothing is
      moved between nodes to buy visual space. The − and + markers are CSS ::before
-     content on <del>/<ins>, and the gap that keeps them off the previous word is
-     padding and margin on the same elements, so neither adds a character to the text. */
+     content, and the gap that keeps them off the previous word is padding and margin,
+     so neither adds a character to the text.
+
+     The marker hangs off .d-head, which carries the run's own first word. The head is an
+     atomic inline, so no line can break between the marker and that word and the marker
+     is never left alone against the right margin, reading as the em dash this markup
+     exists to avoid. The split is inside the op's own element — the same characters, in
+     the same order, in the same op — so nothing moves between ops and the reconstruction
+     is unchanged. */
+  function appendMarkedRun(node, text) {
+    var n = text.length, i = 0, j, k;
+    while (i < n && /\s/.test(text.charAt(i))) i++;
+    if (i >= n) {
+      /* Nothing but whitespace: there is no word for the marker to hold on to, and a
+         struck or underlined space is all this run would draw. */
+      if (n) node.appendChild(document.createTextNode(text));
+      node.appendChild(el('span', 'd-head', ''));
+      return;
+    }
+    j = i;
+    while (j < n && !/\s/.test(text.charAt(j))) j++;
+    k = n;
+    while (k > j && /\s/.test(text.charAt(k - 1))) k--;
+    /* The run's own outer whitespace stays in the run, in its own text node, and carries
+       no line: a struck space hanging at a right margin is another dash the reader has to
+       read past, and it is where the line may break so the whole marked run moves down. */
+    if (i > 0) node.appendChild(document.createTextNode(text.slice(0, i)));
+    node.appendChild(el('span', 'd-head', text.slice(i, j)));
+    if (k > j) node.appendChild(el('span', 'd-tail', text.slice(j, k)));
+    if (k < n) node.appendChild(document.createTextNode(text.slice(k)));
+  }
+
   function diffNodes(ops) {
     var frag = document.createDocumentFragment();
     for (var i = 0; i < ops.length; i++) {
@@ -342,7 +372,7 @@
         var isDel = op.type === 'del';
         var s = document.createElement(isDel ? 'del' : 'ins');
         s.className = isDel ? 'd-del' : 'd-ins';
-        s.textContent = t;
+        appendMarkedRun(s, t);
         frag.appendChild(s);
       } else {
         frag.appendChild(document.createTextNode(t));

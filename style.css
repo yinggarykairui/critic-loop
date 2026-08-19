@@ -430,13 +430,31 @@ textarea.is-locked { background: var(--disabled-bg); cursor: default; }
 /* The marked run holds every character of its op, whitespace included, so the diff still
    reconstructs both drafts byte for byte. The − and + are generated content and the gap
    that keeps them off the preceding word is margin and padding, so neither the marker nor
-   the spacing puts a character into the text. */
+   the spacing puts a character into the text.
+
+   The marker hangs off .d-head, which holds the run's own first word and nothing else —
+   no character moves between nodes to build it. .d-head is an atomic inline, so the line
+   can never break between the marker and that word, and the marker is never left alone at
+   a right margin reading as an em dash. A first word too long for the line still wraps,
+   inside .d-head, because the head lets its own content break. */
 .d-del, .d-ins {
   margin-left: 0.22em;
   padding: 0 0.1em;
   border-radius: 2px;
 }
-.d-del::before, .d-ins::before {
+/* The line belongs to the marked words, not to the run's outer spaces: <del> and <ins>
+   carry no decoration of their own (the browser's default is turned off), and the head and
+   the tail — the run's own first word and everything after it up to its last non-space
+   character — draw it themselves. A space left hanging at a right margin then draws
+   nothing, instead of a short line that reads as one more dash. */
+.d-head, .d-tail { text-decoration-thickness: 2px; }
+.d-head {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.d-head::before {
   display: inline-block;   /* atomic inline: the line through the run does not cross it */
   font-family: var(--mono);
   font-weight: 700;
@@ -444,17 +462,19 @@ textarea.is-locked { background: var(--disabled-bg); cursor: default; }
 }
 .d-del {
   color: var(--del);
-  text-decoration: line-through;
-  text-decoration-thickness: 2px;
+  text-decoration: none;
 }
-.d-del::before { content: "\2212"; }
+.d-del .d-head, .d-del .d-tail { text-decoration: line-through; }
+.d-del .d-head::before { content: "\2212"; }
 .d-ins {
   color: var(--ins);
+  text-decoration: none;
+}
+.d-ins .d-head, .d-ins .d-tail {
   text-decoration: underline;
-  text-decoration-thickness: 2px;
   text-underline-offset: 2px;
 }
-.d-ins::before { content: "+"; }
+.d-ins .d-head::before { content: "+"; }
 
 /* final */
 .final-head { font-weight: 600; margin: 0 0 0.5rem; }
