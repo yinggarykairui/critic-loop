@@ -379,18 +379,34 @@ textarea { resize: vertical; min-height: 7.5rem; }
 .diff-legend { font-size: 0.78rem; color: var(--muted); font-family: var(--mono); }
 
 .diff { font-size: 0.97rem; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+/* The marked run holds every character of its op, whitespace included, so the diff still
+   reconstructs both drafts byte for byte. The − and + are generated content and the gap
+   that keeps them off the preceding word is margin and padding, so neither the marker nor
+   the spacing puts a character into the text. */
+.d-del, .d-ins {
+  margin-left: 0.22em;
+  padding: 0 0.1em;
+  border-radius: 2px;
+}
+.d-del::before, .d-ins::before {
+  display: inline-block;   /* atomic inline: the line through the run does not cross it */
+  font-family: var(--mono);
+  font-weight: 700;
+  padding-right: 0.06em;
+}
 .d-del {
   color: var(--del);
   text-decoration: line-through;
   text-decoration-thickness: 2px;
 }
+.d-del::before { content: "\2212"; }
 .d-ins {
   color: var(--ins);
   text-decoration: underline;
   text-decoration-thickness: 2px;
   text-underline-offset: 2px;
 }
-.d-mark { font-family: var(--mono); font-weight: 700; text-decoration: none; }
+.d-ins::before { content: "+"; }
 
 /* final */
 .final-head { font-weight: 600; margin: 0 0 0.5rem; }

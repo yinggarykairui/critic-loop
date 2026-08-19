@@ -56,8 +56,6 @@
     return n;
   }
 
-  function srOnly(text) { return el('span', 'sr-only', text); }
-
   function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
 
   function setStatus(text, kind) {
@@ -321,9 +319,12 @@
     addTranscript(p);
   }
 
-  /* A del/ins run keeps the whitespace that precedes it, so joining the ops rebuilds
-     the text. That whitespace is emitted as a plain node before the marked span —
-     inside it, the − or + sits flush against the previous word and reads as a dash. */
+  /* Every character of an op — its leading whitespace included — goes inside that op's
+     own node, so concatenating the text nodes of a diff rebuilds the drafts byte for
+     byte: same + del is the draft before, same + ins is the draft after. Nothing is
+     moved between nodes to buy visual space. The − and + markers are CSS ::before
+     content on <del>/<ins>, and the gap that keeps them off the previous word is
+     padding and margin on the same elements, so neither adds a character to the text. */
   function diffNodes(ops) {
     var frag = document.createDocumentFragment();
     for (var i = 0; i < ops.length; i++) {
@@ -331,17 +332,10 @@
       var t = String(op.text == null ? '' : op.text);
       if (!t) continue;
       if (op.type === 'del' || op.type === 'ins') {
-        var lead = /^\s+/.exec(t);
-        var rest = t;
-        if (lead) {
-          frag.appendChild(document.createTextNode(lead[0]));
-          rest = t.slice(lead[0].length);
-        }
         var isDel = op.type === 'del';
-        var s = el('span', isDel ? 'd-del' : 'd-ins');
-        s.appendChild(srOnly(isDel ? ' deleted: ' : ' inserted: '));
-        s.appendChild(el('span', 'd-mark', isDel ? '−' : '+'));
-        if (rest) s.appendChild(document.createTextNode(rest));
+        var s = document.createElement(isDel ? 'del' : 'ins');
+        s.className = isDel ? 'd-del' : 'd-ins';
+        s.textContent = t;
         frag.appendChild(s);
       } else {
         frag.appendChild(document.createTextNode(t));
