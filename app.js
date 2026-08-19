@@ -8,6 +8,7 @@
   var STEP_MS = 250;
   var DRAFT_DISPLAY_CHARS = 6000;    /* panels show this much; copy and export use all of it */
   var FINDINGS_RENDER_CAP = 60;
+  var FINDINGS_OPEN_CAP = 6;         /* a pass with more findings than this renders them closed */
   var FINDINGS_KEEP_CAP = 3000;      /* how many finding objects a pass holds on to */
   var DIFF_CHAR_LIMIT = 12000;       /* above this the word diff is skipped, and says so */
   var CHUNK_THRESHOLD = 6000;        /* text longer than this is critiqued in chunks */
@@ -21,9 +22,13 @@
   var els = {
     input: $('input'), counter: $('counter'), run: $('run'), stop: $('stop'), skip: $('skip'),
     status: $('status'), transcript: $('transcript'), emptyNote: $('empty-note'),
+    section: $('transcript-section'),
     livePanel: $('live-panel'), key: $('api-key'), model: $('model'),
     offline: $('engine-offline'), live: $('engine-live')
   };
+
+  var sampleButtons = document.querySelectorAll('[data-sample]');
+  var engineRadios = document.querySelectorAll('input[name="engine"]');
 
   var state = {
     running: false,
@@ -81,6 +86,8 @@
     return String(Math.round(n * 10) / 10);
   }
 
+  function count(n) { return Number(n || 0).toLocaleString('en-US'); }
+
   function signed(d) {
     if (d === 0) return '±0';
     return (d > 0 ? '+' : '−') + num(Math.abs(d));
@@ -90,6 +97,32 @@
     var t = String(text == null ? '' : text);
     if (t.length <= limit) return { text: t, truncated: false, total: t.length };
     return { text: t.slice(0, limit), truncated: true, total: t.length };
+  }
+
+  /* ---------- keeping the loop on screen ---------- */
+
+  /* The transcript sits below the fold, so a run that is not scrolled to plays where
+     nobody can see it. Instant scrolling only: no animation to fight reduced motion. */
+  function scrollTo(node, align) {
+    if (!node || typeof node.scrollIntoView !== 'function') return;
+    try { node.scrollIntoView({ block: align || 'nearest', inline: 'nearest' }); }
+    catch (e) { try { node.scrollIntoView(); } catch (e2) { /* nothing else to try */ } }
+  }
+
+  /* Focus without scrolling: moving focus back to Run at the end of a run must not
+     yank the page away from the panel that just landed. */
+  function focusQuietly(node) {
+    if (!node) return;
+    try { node.focus({ preventScroll: true }); } catch (e) { try { node.focus(); } catch (e2) { /* none */ } }
+  }
+
+  function keepInView(node) {
+    var tall = false;
+    try {
+      var h = node.getBoundingClientRect().height;
+      tall = h > (window.innerHeight || 800) * 0.8;
+    } catch (e) { tall = false; }
+    scrollTo(node, tall ? 'start' : 'nearest');
   }
 
   /* ---------- engine presence ---------- */
@@ -104,6 +137,12 @@
     return (CL && CL.LENSES) || [{ id: 'clarity', name: 'Clarity', blurb: '' }];
   }
 
+  function lensById(id) {
+    var L = lenses();
+    for (var i = 0; i < L.length; i++) if (L[i].id === id) return L[i];
+    return { id: id, name: String(id || 'lens'), blurb: '' };
+  }
+
   /* ---------- samples ---------- */
 
   function sampleText(name) {
@@ -113,7 +152,46 @@
 
   function updateCounter() {
     var n = els.input.value.length;
-    els.counter.textContent = n === 1 ? '1 character' : n.toLocaleString('en-US') + ' characters';
+    els.counter.textContent = n === 1 ? '1 character' : count(n) + ' characters';
+  }
+
+  /* ---------- the verdict ----------
+     One function builds the sentence. The status bar, the Result panel and the export
+     all call it, so the three can never disagree. */
+
+  function verdictLine(rec) {
+    var n = rec.passes.length;
+    if (rec.converged) {
+      var at = (typeof rec.stoppedAt === 'number') ? rec.stoppedAt : n;
+      return 'Converged after ' + count(at) + (at === 1 ? ' pass.' : ' passes.');
+    }
+    var unparsed = 0, found = 0, i;
+    for (i = 0; i < rec.passes.length; i++) {
+      if (rec.passes[i].unparsed !== undefined) unparsed++;
+      else if (rec.passes[i].total > 0) found++;
+    }
+    var passes = count(n) + (n === 1 ? ' pass' : ' passes');
+    if (n > 0 && unparsed === n) {
+      return passes + ', and no reply could be parsed. Nothing was found.';
+    }
+    if (unparsed > 0) {
+      return passes + ', ' + count(unparsed) + ' of them unparseable. The rest still found things.';
+    }
+    if (found === 0) return passes + ', and nothing more was found.';
+    return passes + ', still finding things.';
+  }
+
+  function verdictBlurb(rec) {
+    if (rec.converged) {
+      return 'The draft was clean under every lens that had not run yet, so the loop stopped early.';
+    }
+    var unparsed = 0;
+    for (var i = 0; i < rec.passes.length; i++) if (rec.passes[i].unparsed !== undefined) unparsed++;
+    if (unparsed > 0) {
+      return 'An unparseable reply is not a pass that found nothing. ' + count(unparsed) +
+        ' of ' + count(rec.passes.length) + ' replies could not be read as findings.';
+    }
+    return 'The cap is ' + MAX_PASSES + ' passes. One lens runs per pass.';
   }
 
   /* ---------- metrics strip ---------- */
@@ -125,10 +203,10 @@
     { key: 'hedges', label: 'hedges' }
   ];
 
-  function metricsStrip(m, prev) {
+  function metricsStrip(m, prev, aria) {
     var wrap = el('div', 'metrics');
     wrap.setAttribute('role', 'group');
-    wrap.setAttribute('aria-label', 'Metrics for this draft');
+    wrap.setAttribute('aria-label', aria || 'Metrics for this draft');
     for (var i = 0; i < METRIC_ROWS.length; i++) {
       var row = METRIC_ROWS[i];
       var cur = m && typeof m[row.key] === 'number' ? m[row.key] : 0;
@@ -144,7 +222,6 @@
       }
       wrap.appendChild(item);
     }
-    if (m && m.chunked) wrap.appendChild(el('span', 'metric', 'summed over chunks'));
     return wrap;
   }
 
@@ -170,6 +247,7 @@
   function addTranscript(node) {
     els.emptyNote.hidden = true;
     els.transcript.appendChild(node);
+    keepInView(node);
   }
 
   function draftBody(p, text) {
@@ -177,19 +255,22 @@
     p.appendChild(el('p', 'draft-text', shown.text));
     if (shown.truncated) {
       p.appendChild(el('p', 'truncated-note',
-        'Showing the first ' + DRAFT_DISPLAY_CHARS.toLocaleString('en-US') + ' of ' +
-        shown.total.toLocaleString('en-US') + ' characters. Copy and export use the whole draft.'));
+        'Showing the first ' + count(DRAFT_DISPLAY_CHARS) + ' of ' +
+        count(shown.total) + ' characters. Copy and export use the whole draft.'));
     }
   }
 
   function renderDraft0(text, m) {
     var p = panel('draft');
-    label(p, 'Draft 0');
+    label(p, 'Draft 0 — pasted text');
     draftBody(p, text);
     p.appendChild(metricsStrip(m, null));
     addTranscript(p);
   }
 
+  /* A del/ins run keeps the whitespace that precedes it, so joining the ops rebuilds
+     the text. That whitespace is emitted as a plain node before the marked span —
+     inside it, the − or + sits flush against the previous word and reads as a dash. */
   function diffNodes(ops) {
     var frag = document.createDocumentFragment();
     for (var i = 0; i < ops.length; i++) {
@@ -197,11 +278,17 @@
       var t = String(op.text == null ? '' : op.text);
       if (!t) continue;
       if (op.type === 'del' || op.type === 'ins') {
+        var lead = /^\s+/.exec(t);
+        var rest = t;
+        if (lead) {
+          frag.appendChild(document.createTextNode(lead[0]));
+          rest = t.slice(lead[0].length);
+        }
         var isDel = op.type === 'del';
         var s = el('span', isDel ? 'd-del' : 'd-ins');
         s.appendChild(srOnly(isDel ? ' deleted: ' : ' inserted: '));
         s.appendChild(el('span', 'd-mark', isDel ? '−' : '+'));
-        s.appendChild(document.createTextNode(t));
+        if (rest) s.appendChild(document.createTextNode(rest));
         frag.appendChild(s);
       } else {
         frag.appendChild(document.createTextNode(t));
@@ -210,9 +297,23 @@
     return frag;
   }
 
+  function renderNoChange(index, findings) {
+    var p = panel('draft');
+    label(p, 'Pass ' + index + ' · Draft ' + index + ' — no change');
+    var pointers = 0;
+    for (var i = 0; i < findings.length; i++) {
+      if (findings[i] && (findings[i].replacement === null || findings[i].replacement === undefined)) pointers++;
+    }
+    p.appendChild(el('p', 'why', pointers === findings.length && findings.length
+      ? 'Every finding in this pass was a pointer, so nothing was rewritten. Draft ' +
+        index + ' is draft ' + (index - 1) + ', unchanged.'
+      : 'Nothing was applied in this pass. Draft ' + index + ' is draft ' + (index - 1) + ', unchanged.'));
+    addTranscript(p);
+  }
+
   function renderDraft(index, before, after, mBefore, mAfter, applied) {
     var p = panel('draft');
-    label(p, 'Draft ' + index);
+    label(p, 'Pass ' + index + ' · Draft ' + index);
 
     var canDiff = typeof CL.diffWords === 'function' &&
       (before.length + after.length) <= DIFF_CHAR_LIMIT;
@@ -240,8 +341,8 @@
           var shown = shortenForDisplay(after, DRAFT_DISPLAY_CHARS);
           body.appendChild(el('p', 'draft-text', shown.text));
           if (shown.truncated) body.appendChild(el('p', 'truncated-note',
-            'Showing the first ' + DRAFT_DISPLAY_CHARS.toLocaleString('en-US') + ' of ' +
-            shown.total.toLocaleString('en-US') + ' characters.'));
+            'Showing the first ' + count(DRAFT_DISPLAY_CHARS) + ' of ' +
+            count(shown.total) + ' characters.'));
         }
         toggle.textContent = mode === 'diff' ? 'Show clean text' : 'Show diff';
         toggle.setAttribute('aria-pressed', mode === 'diff' ? 'true' : 'false');
@@ -264,17 +365,24 @@
 
     p.appendChild(el('p', 'pass-summary',
       applied === 1 ? '1 finding applied to make this draft.'
-        : applied.toLocaleString('en-US') + ' findings applied to make this draft.'));
+        : count(applied) + ' findings applied to make this draft.'));
     p.appendChild(metricsStrip(mAfter, mBefore));
     addTranscript(p);
   }
 
-  function renderFinding(f) {
+  /* A finding may carry display.quote / display.replacement: the text to show when the
+     mechanical span picked up a neighbouring character. What is applied is always
+     f.replacement — display is for reading only. */
+  function renderFinding(f, open) {
     var d = el('details', 'finding');
-    d.open = true;
+    d.open = !!open;
+    var disp = (f && f.display && typeof f.display === 'object') ? f.display : null;
+    var quoteText = (disp && disp.quote !== undefined && disp.quote !== null)
+      ? String(disp.quote) : String(f.quote == null ? '' : f.quote);
+
     var s = document.createElement('summary');
     s.appendChild(el('span', 'rule-name', String(f.ruleName || f.rule || 'Finding')));
-    s.appendChild(el('span', 'quote', shortenForDisplay(String(f.quote == null ? '' : f.quote), QUOTE_DISPLAY_CHARS).text));
+    s.appendChild(el('span', 'quote', shortenForDisplay(quoteText, QUOTE_DISPLAY_CHARS).text));
     d.appendChild(s);
 
     var body = el('div', 'finding-body');
@@ -284,55 +392,87 @@
     if (f.replacement === null || f.replacement === undefined) {
       repl.appendChild(el('span', 'repl-none', 'Pointer only — the loop will not rewrite this one for you.'));
     } else if (f.located === false) {
-      repl.appendChild(el('span', 'repl-none', 'The model quoted text that is not in this draft, so nothing was changed.'));
+      repl.appendChild(el('span', 'repl-none',
+        'The model quoted text that is not in this draft, so nothing was changed.'));
     } else {
+      var shownRepl = (disp && disp.replacement !== undefined && disp.replacement !== null)
+        ? String(disp.replacement) : String(f.replacement);
       repl.appendChild(el('span', 'repl-arrow', '→ '));
-      if (String(f.replacement) === '') repl.appendChild(el('span', 'repl-empty', '(delete it)'));
-      else repl.appendChild(el('span', 'repl-text', String(f.replacement)));
+      if (shownRepl === '') repl.appendChild(el('span', 'repl-empty', '(delete it)'));
+      else repl.appendChild(el('span', 'repl-text', shownRepl));
     }
     body.appendChild(repl);
     d.appendChild(body);
     return d;
   }
 
-  function renderCritique(index, lens, findings, extra) {
+  function renderCritique(index, lens, findings, info) {
+    info = info || {};
     var p = panel('critique');
-    label(p, 'Critique ' + index, lens && lens.name ? lens.name : '');
+    label(p, 'Pass ' + index + ' · Critique', lens && lens.name ? lens.name : '');
     if (lens && lens.blurb) p.appendChild(el('p', 'panel-blurb', lens.blurb));
 
-    if (extra && extra.unparsed !== undefined) {
-      p.appendChild(el('p', 'why', 'The model did not answer with findings this page could parse. Its reply is shown as it came back, unparsed. Nothing was applied.'));
-      p.appendChild(el('p', 'quote', shortenForDisplay(String(extra.unparsed), 4000).text));
+    if (info.unparsed !== undefined) {
+      p.appendChild(el('p', 'why', 'The model did not answer with findings this page could parse. ' +
+        'Its reply is shown as it came back, unparsed. Nothing was applied, and this pass found nothing.'));
+      p.appendChild(el('p', 'quote', shortenForDisplay(String(info.unparsed), 4000).text));
       addTranscript(p);
       return;
     }
 
-    if (!findings.length && !(extra && extra.total)) {
-      p.appendChild(el('p', 'why', 'Found nothing — the loop stops here.'));
-      p.appendChild(el('p', 'panel-blurb',
-        'A critic with no findings is the termination condition. There is no pass ' + (index + 1) + '.'));
+    var total = (typeof info.total === 'number') ? info.total : findings.length;
+    var applied = (typeof info.applied === 'number') ? info.applied : 0;
+
+    if (!total) {
+      p.appendChild(el('p', 'why', 'Found nothing under this lens. The draft is unchanged.'));
       addTranscript(p);
       return;
     }
 
-    var total = (extra && typeof extra.total === 'number') ? extra.total : findings.length;
     var list = el('ul', 'findings');
     var shown = Math.min(findings.length, FINDINGS_RENDER_CAP);
+    var openThem = total <= FINDINGS_OPEN_CAP;
     for (var i = 0; i < shown; i++) {
       var li = el('li');
-      li.appendChild(renderFinding(findings[i]));
+      li.appendChild(renderFinding(findings[i], openThem));
       list.appendChild(li);
     }
     p.appendChild(list);
     if (total > shown) {
       p.appendChild(el('p', 'capped-note',
-        (total - shown).toLocaleString('en-US') + ' more findings are not listed here, to keep the page quick. ' +
-        'All ' + total.toLocaleString('en-US') + ' were applied to the next draft.'));
+        'Listing the first ' + count(shown) + ' of ' + count(total) +
+        ' findings, to keep the page quick. The counts below cover all ' + count(total) + '.'));
     }
-    p.appendChild(el('p', 'pass-summary',
-      (total === 1 ? '1 finding' : total.toLocaleString('en-US') + ' findings') +
-      (extra && extra.chunks > 1 ? ' across ' + extra.chunks.toLocaleString('en-US') + ' chunks.' : '.')));
+
+    p.appendChild(el('p', 'pass-summary', passSummary(findings, total, applied, info.chunks)));
     addTranscript(p);
+  }
+
+  /* Says which number means what. Pointers are never applied, and a live quote the page
+     could not place is never applied either, so "found" and "applied" are different counts. */
+  function passSummary(findings, total, applied, chunks) {
+    var head = count(total) + (total === 1 ? ' finding' : ' findings') +
+      (chunks > 1 ? ' across ' + count(chunks) + ' chunks' : '') + '. ';
+    if (applied === total) {
+      return head + (total === 1 ? 'It was applied to the next draft.'
+        : 'All ' + count(total) + ' were applied to the next draft.');
+    }
+    var body = count(applied) + ' of them ' + (applied === 1 ? 'was' : 'were') + ' applied to the next draft. ';
+    if (findings.length === total) {
+      var pointers = 0, unplaced = 0, i;
+      for (i = 0; i < findings.length; i++) {
+        var f = findings[i] || {};
+        if (f.replacement === null || f.replacement === undefined) pointers++;
+        else if (f.located === false) unplaced++;
+      }
+      if (pointers) body += count(pointers) + ' ' + (pointers === 1 ? 'is a pointer' : 'are pointers') +
+        ', which the loop never applies. ';
+      if (unplaced) body += count(unplaced) + ' ' + (unplaced === 1 ? 'quote' : 'quotes') +
+        ' could not be placed in this draft. ';
+      return head + body.replace(/\s+$/, '');
+    }
+    return head + body + count(total - applied) + ' ' + (total - applied === 1 ? 'was' : 'were') +
+      ' not applied: pointers, or quotes the loop could not place.';
   }
 
   function renderNote(text) {
@@ -341,17 +481,19 @@
     addTranscript(p);
   }
 
-  function renderFinal(result) {
+  function renderFinal(record) {
     var p = panel('final');
     label(p, 'Result');
-    var head = result.converged
-      ? 'Converged after ' + result.stoppedAt + (result.stoppedAt === 1 ? ' pass.' : ' passes.')
-      : MAX_PASSES + ' passes, still finding things.';
-    p.appendChild(el('p', 'final-head', head));
-    p.appendChild(el('p', 'panel-blurb', result.converged
-      ? 'Pass ' + result.stoppedAt + ' found nothing, so the loop stopped early. That is the whole termination rule.'
-      : 'The cap is ' + MAX_PASSES + ' passes. The critic still had things to say when it hit the cap.'));
-    draftBody(p, result.finalText);
+    p.appendChild(el('p', 'final-head', verdictLine(record)));
+    p.appendChild(el('p', 'panel-blurb', verdictBlurb(record)));
+    draftBody(p, record.finalText);
+
+    var mFinal = record.metrics0;
+    for (var i = 0; i < record.passes.length; i++) {
+      if (record.passes[i].metricsAfter) mFinal = record.passes[i].metricsAfter;
+    }
+    p.appendChild(el('p', 'metrics-head', 'Draft 0 → final draft'));
+    p.appendChild(metricsStrip(mFinal, record.metrics0, 'Draft 0 to final draft'));
 
     var actions = el('div', 'final-actions');
     var copy = el('button', 'btn', 'Copy final draft');
@@ -362,7 +504,7 @@
     note.setAttribute('role', 'status');
     note.setAttribute('aria-live', 'polite');
 
-    copy.addEventListener('click', function () { copyText(result.finalText, note); });
+    copy.addEventListener('click', function () { copyText(record.finalText, note); });
     exp.addEventListener('click', function () { exportMarkdown(note); });
 
     actions.appendChild(copy);
@@ -427,11 +569,11 @@
       out.push('## Critique ' + p.index + ' — ' + p.lensName);
       out.push('');
       if (p.unparsed !== undefined) {
-        out.push('The reply could not be parsed as findings. Raw reply:');
+        out.push('The reply could not be parsed as findings, so this pass found nothing. Raw reply:');
         out.push('');
         out.push(mdFence(p.unparsed));
-      } else if (!p.findings.length) {
-        out.push('Found nothing. The loop stops here.');
+      } else if (!p.total) {
+        out.push('Found nothing under this lens. The draft is unchanged.');
         out.push('');
       } else {
         var listed = Math.min(p.findings.length, 400);
@@ -445,28 +587,39 @@
             : (f.located === false ? 'quote not found in the draft, not applied'
               : 'replacement: "' + String(f.replacement) + '"')));
         }
-        if ((p.total || p.findings.length) > listed) {
-          out.push('- (' + ((p.total || p.findings.length) - listed) + ' further findings not listed)');
+        if (p.total > listed) {
+          out.push('- (' + (p.total - listed) + ' further findings not listed)');
         }
         out.push('');
-        out.push('Applied: ' + p.applied + ' of ' + (p.total || p.findings.length) + '.');
+        out.push('Applied: ' + p.applied + ' of ' + p.total + '.');
         out.push('');
         out.push('## Draft ' + p.index);
         out.push('');
-        out.push(mdFence(p.after));
+        if (p.after === p.before) {
+          out.push('Unchanged: nothing in this pass was applied.');
+          out.push('');
+        } else {
+          out.push(mdFence(p.after));
+        }
         out.push('Metrics: ' + metricLine(p.metricsAfter));
         out.push('');
       }
     }
     out.push('## Result');
     out.push('');
-    out.push(t.converged
-      ? 'Converged after ' + t.stoppedAt + ' pass(es).'
-      : MAX_PASSES + ' passes, still finding things.');
+    out.push(verdictLine(t));
     out.push('');
     out.push(mdFence(t.finalText));
+    out.push('Metrics, draft 0 → final: ' + metricLine(t.metrics0) + ' → ' + metricLine(finalMetrics(t)));
+    out.push('');
     out.push('No API key is included in this file.');
     return out.join('\n');
+  }
+
+  function finalMetrics(t) {
+    var m = t.metrics0;
+    for (var i = 0; i < t.passes.length; i++) if (t.passes[i].metricsAfter) m = t.passes[i].metricsAfter;
+    return m;
   }
 
   function metricLine(m) {
@@ -627,27 +780,41 @@
   }
 
   /* ---------- chunking ----------
-     The engine is a black box and some of its work is quadratic in the length of a string.
-     So long text is cut into chunks, each chunk is critiqued on its own, and the page hands
-     the frame back between chunks. Nothing is dropped; findings just never cross a boundary. */
+     Some of the engine's work is superlinear in the length of one string, so long text is
+     critiqued chunk by chunk with the frame handed back between chunks. Chunks are cut at a
+     sentence end where there is one and at whitespace otherwise, never mid-token, and every
+     chunk after the first is critiqued with atTextStart:false so offset 0 is not read as the
+     start of a sentence. Metrics are never chunked: metrics() is O(n) and runs on the whole
+     draft. Nothing is dropped, but a finding never spans a chunk boundary. */
 
   function now() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
+
+  function isSpaceAt(text, i) {
+    var c = text.charAt(i);
+    return c !== '' && /\s/.test(c);
+  }
 
   function splitChunks(text, target) {
     var out = [], i = 0, n = text.length;
     while (i < n) {
       var end = Math.min(n, i + target);
       if (end < n) {
-        var limit = Math.min(n, end + Math.floor(target / 2));
-        var cut = -1, j;
-        for (j = end; j < limit; j++) {
-          var c = text.charAt(j);
-          if ((c === '.' || c === '!' || c === '?') && j + 1 < n && /\s/.test(text.charAt(j + 1))) { cut = j + 2; break; }
+        var floor = i + Math.floor(target / 2);
+        var atSpace = -1, atSentence = -1, j, k, c;
+        for (j = end; j > floor; j--) {
+          if (!isSpaceAt(text, j - 1)) continue;
+          if (atSpace === -1) atSpace = j;
+          k = j - 2;
+          while (k > i && isSpaceAt(text, k)) k--;
+          c = text.charAt(k);
+          if (c === '.' || c === '!' || c === '?') { atSentence = j; break; }
         }
+        var cut = atSentence !== -1 ? atSentence : atSpace;
         if (cut === -1) {
-          for (j = end; j < limit; j++) { if (/\s/.test(text.charAt(j))) { cut = j + 1; break; } }
+          var limit = Math.min(n, end + Math.floor(target / 2));
+          for (j = end; j < limit; j++) { if (isSpaceAt(text, j)) { cut = j + 1; break; } }
         }
-        if (cut > 0) end = Math.min(cut, n);
+        if (cut > i) end = Math.min(cut, n);
       }
       out.push({ start: i, text: text.slice(i, end) });
       i = end;
@@ -658,23 +825,15 @@
 
   function shiftFinding(f, offset) {
     return {
-      rule: f.rule, ruleName: f.ruleName, quote: f.quote, why: f.why,
+      rule: f.rule, ruleName: f.ruleName, quote: f.quote, why: f.why, display: f.display,
       replacement: (f.replacement === undefined ? null : f.replacement),
       start: (typeof f.start === 'number' ? f.start + offset : -1),
       end: (typeof f.end === 'number' ? f.end + offset : -1)
     };
   }
 
-  /* One offline pass: critique + apply, chunked when the text is long. */
-  function offlinePass(text, lensId, alive) {
-    if (text.length <= CHUNK_THRESHOLD) {
-      var c = CL.critique(text, lensId);
-      var findings = c.findings || [];
-      var ap = CL.applyFindings(text, findings);
-      return Promise.resolve({
-        findings: findings, total: findings.length, after: ap.text, applied: ap.applied, chunks: 1
-      });
-    }
+  /* One chunked offline critique: findings for the whole text, applied chunk by chunk. */
+  function chunkedPass(text, lensId, alive) {
     var chunks = splitChunks(text, CHUNK_TARGET);
     var kept = [], total = 0, applied = 0, parts = [];
     var i = 0, last = now();
@@ -683,7 +842,7 @@
       while (i < chunks.length) {
         if (!alive()) return Promise.resolve(null);
         var ch = chunks[i++];
-        var res = CL.critique(ch.text, lensId);
+        var res = CL.critique(ch.text, lensId, { atTextStart: ch.start === 0 });
         var fs = res.findings || [];
         var ap = CL.applyFindings(ch.text, fs);
         parts.push(ap.text);
@@ -701,36 +860,102 @@
     return Promise.resolve().then(slice);
   }
 
-  /* Metrics over long text, summed chunk by chunk, with the same yielding. */
-  function metricsFor(text, alive) {
-    if (text.length <= CHUNK_THRESHOLD) return Promise.resolve(CL.metrics(text));
-    var chunks = splitChunks(text, CHUNK_TARGET);
-    var agg = { words: 0, sentences: 0, hedges: 0, chars: 0, meanSentenceLength: 0, chunked: true };
-    var i = 0, last = now();
-    function slice() {
-      while (i < chunks.length) {
-        if (!alive()) return Promise.resolve(agg);
-        var m = CL.metrics(chunks[i++].text) || {};
-        agg.words += m.words || 0;
-        agg.sentences += m.sentences || 0;
-        agg.hedges += m.hedges || 0;
-        agg.chars += m.chars || 0;
-        if (now() - last > SLICE_BUDGET_MS) { last = now(); return yieldToPaint().then(slice); }
-      }
-      agg.meanSentenceLength = agg.sentences ? Math.round((agg.words / agg.sentences) * 10) / 10 : 0;
-      return Promise.resolve(agg);
+  /* ---------- drivers ----------
+     A driver is an iterator of passes: next() resolves to {done:false, value:pass} or
+     {done:true, value:{converged, stoppedAt, finalText, passCount}}. The offline default
+     path is CriticLoop.steps() itself, so the loop the page plays is the loop the suite
+     tests. Live mode and chunked long text step the same shape from the page, because
+     one needs the network and the other needs to hand the frame back mid-pass. */
+
+  function enginePasses(text) {
+    var it = CL.steps(text, { maxPasses: MAX_PASSES });
+    return {
+      next: function () { return Promise.resolve(it.next()); }
+    };
+  }
+
+  /* Convergence, for the drivers the page steps itself: the draft is clean under every
+     lens that has not run yet. Those lenses are simply run, and a tail of parsed passes
+     that found nothing is what "clean under the rest" means. Nothing is guessed. */
+  function tailConverged(passes) {
+    var at = null;
+    for (var i = passes.length - 1; i >= 0; i--) {
+      var p = passes[i];
+      if (p.unparsed !== undefined || p.total > 0) break;
+      at = i + 1;
     }
-    return Promise.resolve().then(slice);
+    return { converged: at !== null, stoppedAt: at };
+  }
+
+  function pagePasses(text, opts) {
+    var L = lenses();
+    var passes = [];
+    var current = text;
+    var mCurrent = null;
+    var i = 0;
+
+    function result() {
+      var t = tailConverged(passes);
+      return {
+        done: true,
+        value: {
+          converged: t.converged, stoppedAt: t.stoppedAt,
+          finalText: current, passCount: passes.length
+        }
+      };
+    }
+
+    return {
+      next: function () {
+        if (i >= MAX_PASSES || i >= L.length) return Promise.resolve(result());
+        var lens = L[i];
+        var index = i + 1;
+        i++;
+        var before = current;
+        if (mCurrent === null) mCurrent = CL.metrics(before);
+        var mBefore = mCurrent;
+
+        return opts.critique(before, lens).then(function (res) {
+          if (!res) return { done: true, value: null };
+          var after = res.after === undefined ? before : res.after;
+          /* metrics() is O(n): the whole draft, every time, never summed over chunks. */
+          var mAfter = after === before ? mBefore : CL.metrics(after);
+          var pass = {
+            index: index, lens: lens.id, lensName: lens.name, findings: res.findings || [],
+            total: res.total || 0, before: before, after: after, applied: res.applied || 0,
+            metricsBefore: mBefore, metricsAfter: mAfter, chunks: res.chunks || 1,
+            unparsed: res.unparsed
+          };
+          passes.push(pass);
+          current = after;
+          mCurrent = mAfter;
+          return { done: false, value: pass };
+        });
+      }
+    };
   }
 
   /* ---------- the loop ---------- */
 
   function setBusy(busy) {
+    var s;
     state.running = busy;
     els.run.disabled = busy;
+    els.run.textContent = busy ? 'Running…' : 'Run';
+    els.run.setAttribute('aria-busy', busy ? 'true' : 'false');
+    /* Stop is not shown at all until there is a run to stop. */
+    els.stop.hidden = !busy;
     els.stop.disabled = !busy;
     els.skip.hidden = !busy || reduceMotion;  /* nothing to skip when motion is already off */
-    els.run.setAttribute('aria-busy', busy ? 'true' : 'false');
+    for (s = 0; s < sampleButtons.length; s++) sampleButtons[s].disabled = busy;
+    for (s = 0; s < engineRadios.length; s++) engineRadios[s].disabled = busy;
+    /* Run disables itself, so keyboard focus has to go somewhere real. */
+    if (busy) {
+      if (document.activeElement === els.run || document.activeElement === document.body) focusQuietly(els.stop);
+    } else if (document.activeElement === els.stop || document.activeElement === els.skip ||
+      document.activeElement === document.body) {
+      focusQuietly(els.run);
+    }
   }
 
   function resetTranscript() {
@@ -742,14 +967,22 @@
 
   function isLive() { return els.live.checked; }
 
+  function stoppedNote() {
+    /* Only when there is a transcript above it to be everything that had run. */
+    if (els.transcript.firstChild) {
+      renderNote('Stopped. The transcript above is everything that had run when you pressed Stop.');
+    }
+    setStatus('Stopped.');
+  }
+
   function runLoop() {
     if (state.running) return;
     if (!CL || typeof CL.critique !== 'function') return;
 
+    /* Validate before anything is cleared: a blank box must not destroy a finished run. */
     var raw = els.input.value;
     if (!raw || !raw.trim()) {
-      resetTranscript();
-      setStatus('Nothing to critique. Paste a paragraph or load a sample first.', 'error');
+      setStatus('Nothing to critique. Paste a paragraph or load a sample first. The transcript is untouched.', 'error');
       els.input.focus();
       return;
     }
@@ -758,15 +991,13 @@
     var key = live ? els.key.value.trim() : '';
     var model = live ? (els.model.value.trim() || 'claude-sonnet-4-5') : '';
     if (live && !key) {
-      resetTranscript();
       setStatus('Live mode needs an API key in the field above.', 'error');
       els.key.focus();
       return;
     }
     if (live && raw.length > LIVE_MAX_INPUT) {
-      resetTranscript();
-      setStatus('That is ' + raw.length.toLocaleString('en-US') + ' characters. Live mode sends at most ' +
-        LIVE_MAX_INPUT.toLocaleString('en-US') + '. Trim it, or use the offline critic.', 'error');
+      setStatus('That is ' + count(raw.length) + ' characters. Live mode sends at most ' +
+        count(LIVE_MAX_INPUT) + '. Trim it, or use the offline critic.', 'error');
       return;
     }
 
@@ -777,108 +1008,119 @@
     state.aborter = (typeof AbortController === 'function') ? new AbortController() : null;
     setBusy(true);
     setStatus(live ? 'Running — calling the API.' : 'Running the offline critic.', 'busy');
+    scrollTo(els.section, 'start');
 
     var t0 = now();
     var alive = function () {
       return token === state.runToken && !(state.aborter && state.aborter.signal.aborted);
     };
 
-    var LENS = lenses();
+    var chunked = !live && raw.length > CHUNK_THRESHOLD;
     var record = {
       engineLabel: live ? 'live (' + model + ')' : 'offline rule-based critic',
       draft0: raw, metrics0: null, passes: [], converged: false, stoppedAt: null, finalText: raw,
-      chunks: 1, findingsCapped: false
+      chunks: 1
     };
 
-    var current = raw;
-    var currentMetrics = null;
+    var driver;
+    if (live) {
+      driver = pagePasses(raw, {
+        critique: function (before, lens) {
+          return liveCritique(before, lens, state.aborter && state.aborter.signal, key, model)
+            .then(function (res) {
+              if (!alive()) return null;
+              if (res.unparsed !== undefined) {
+                return { findings: [], total: 0, after: before, applied: 0, chunks: 1, unparsed: res.unparsed };
+              }
+              var all = res.findings || [];
+              var located = all.filter(function (f) { return f.located !== false; });
+              var ap = located.length ? CL.applyFindings(before, located) : { text: before, applied: 0 };
+              return { findings: all, total: all.length, after: ap.text, applied: ap.applied, chunks: 1 };
+            });
+        }
+      });
+    } else if (chunked) {
+      driver = pagePasses(raw, {
+        critique: function (before, lens) { return chunkedPass(before, lens.id, alive); }
+      });
+    } else if (CL && typeof CL.steps === 'function') {
+      driver = enginePasses(raw);
+    } else {
+      /* Older engine without steps(): the page steps the same loop with critique(). */
+      driver = pagePasses(raw, {
+        critique: function (before, lens) {
+          var c = CL.critique(before, lens.id, { atTextStart: true });
+          var fs = c.findings || [];
+          var ap = CL.applyFindings(before, fs);
+          return Promise.resolve({
+            findings: fs, total: fs.length, after: ap.text, applied: ap.applied, chunks: 1
+          });
+        }
+      });
+    }
 
     var chain = yieldToPaint().then(function () {
-      return metricsFor(current, alive);
-    }).then(function (m) {
       if (!alive()) return;
-      record.metrics0 = m;
-      currentMetrics = m;
-      renderDraft0(current, m);
-      if (!live && current.length > CHUNK_THRESHOLD) {
-        var n = splitChunks(current, CHUNK_TARGET).length;
+      record.metrics0 = CL.metrics(raw);
+      renderDraft0(raw, record.metrics0);
+      if (chunked) {
+        var n = splitChunks(raw, CHUNK_TARGET).length;
         record.chunks = n;
-        renderNote('This text is ' + current.length.toLocaleString('en-US') + ' characters, so it is ' +
-          'critiqued in ' + n.toLocaleString('en-US') + ' chunks of about ' + CHUNK_TARGET.toLocaleString('en-US') +
-          ' characters. The page hands control back to the browser between chunks, so it stays usable. ' +
-          'No text is dropped, but a finding never spans a chunk boundary.');
+        renderNote('This text is ' + count(raw.length) + ' characters, so each pass critiques it in ' +
+          count(n) + ' chunks of about ' + count(CHUNK_TARGET) + ' characters, cut at a sentence ' +
+          'end where there is one and at whitespace otherwise, never mid-word. ' +
+          'The page hands control back to the browser between chunks, so it stays usable. Metrics are ' +
+          'measured on the whole draft, not summed over chunks. No text is dropped, but a finding ' +
+          'never spans a chunk boundary.');
       }
     });
 
-    var makePass = function (i) {
-      return function () {
-        if (!alive() || record.converged) return;
-        var lens = LENS[i % LENS.length];
-        var before = current;
-        var mBefore = currentMetrics;
+    function pump() {
+      if (!alive()) return Promise.resolve(null);
+      return Promise.resolve(driver.next()).then(function (step) {
+        if (!alive() || !step) return null;
+        if (step.done) return step.value || null;
+        var pass = step.value;
+        if (!pass) return null;
+        var n = record.passes.length + 1;
+        var lens = lensById(pass.lens);
+        record.passes.push({
+          index: n, lens: pass.lens, lensName: pass.lensName || lens.name,
+          findings: pass.findings || [],
+          total: (typeof pass.total === 'number' ? pass.total : (pass.findings || []).length),
+          before: pass.before, after: pass.after, applied: pass.applied || 0,
+          metricsBefore: pass.metricsBefore, metricsAfter: pass.metricsAfter,
+          unparsed: pass.unparsed
+        });
+        var rec = record.passes[record.passes.length - 1];
+        record.finalText = rec.after;
 
         return stepDelay().then(yieldToPaint).then(function () {
           if (!alive()) return null;
-          if (live) {
-            return liveCritique(before, lens, state.aborter && state.aborter.signal, key, model)
-              .then(function (res) {
-                if (res.unparsed !== undefined) {
-                  return { findings: [], total: 0, after: before, applied: 0, chunks: 1, unparsed: res.unparsed };
-                }
-                var located = (res.findings || []).filter(function (f) { return f.located !== false; });
-                var ap = (res.findings || []).length ? CL.applyFindings(before, located) : { text: before, applied: 0 };
-                return {
-                  findings: res.findings || [], total: (res.findings || []).length,
-                  after: ap.text, applied: ap.applied, chunks: 1
-                };
-              });
-          }
-          return offlinePass(before, lens.id, alive);
-        }).then(function (res) {
-          if (!alive() || !res) return;
-          if (res.total > res.findings.length) record.findingsCapped = true;
-          renderCritique(i + 1, lens, res.findings, {
-            unparsed: res.unparsed, total: res.total, chunks: res.chunks
+          renderCritique(n, lens, rec.findings, {
+            unparsed: rec.unparsed, total: rec.total, applied: rec.applied, chunks: pass.chunks
           });
-
-          if (res.unparsed === undefined && res.total === 0) {
-            record.passes.push({
-              index: i + 1, lens: lens.id, lensName: lens.name, findings: res.findings, total: 0,
-              before: before, after: before, applied: 0, metricsBefore: mBefore, metricsAfter: mBefore
-            });
-            record.converged = true;
-            record.stoppedAt = i + 1;
-            return;
-          }
-
-          return metricsFor(res.after, alive).then(function (mAfter) {
-            if (!alive()) return;
-            record.passes.push({
-              index: i + 1, lens: lens.id, lensName: lens.name, findings: res.findings, total: res.total,
-              before: before, after: res.after, applied: res.applied,
-              metricsBefore: mBefore, metricsAfter: mAfter, unparsed: res.unparsed
-            });
-            current = res.after;
-            currentMetrics = mAfter;
-            record.finalText = current;
-            if (res.unparsed !== undefined) return;
-            return stepDelay().then(yieldToPaint).then(function () {
-              if (!alive()) return;
-              renderDraft(i + 1, before, res.after, mBefore, mAfter, res.applied);
-            });
+          if (rec.unparsed !== undefined || rec.total === 0) return null;
+          return stepDelay().then(yieldToPaint).then(function () {
+            if (!alive()) return null;
+            /* A pass that applied nothing gets a "no change" line, not a second copy
+               of the draft rendered as an all-same diff. */
+            if (rec.after === rec.before) renderNoChange(n, rec.findings);
+            else renderDraft(n, rec.before, rec.after, rec.metricsBefore, rec.metricsAfter, rec.applied);
+            return null;
           });
-        });
-      };
-    };
+        }).then(pump);
+      });
+    }
 
-    for (var i = 0; i < MAX_PASSES; i++) chain = chain.then(makePass(i));
-
-    chain.then(function () {
+    chain.then(pump).then(function (result) {
       if (token !== state.runToken) return;
-      if (!alive()) {
-        renderNote('Stopped. The transcript above is everything that had run when you pressed Stop.');
-        setStatus('Stopped.');
-        return;
+      if (!alive()) { stoppedNote(); return; }
+      /* The verdict is the generator's, not the page's. */
+      if (result) {
+        record.converged = !!result.converged;
+        record.stoppedAt = (typeof result.stoppedAt === 'number') ? result.stoppedAt : null;
+        if (typeof result.finalText === 'string') record.finalText = result.finalText;
       }
       state.transcript = record;
       state.finalText = record.finalText;
@@ -886,17 +1128,12 @@
         if (token !== state.runToken) return;
         renderFinal(record);
         var ms = now() - t0;
-        setStatus('Done in ' + (ms / 1000).toFixed(1) + ' s. ' +
-          (record.converged ? 'Converged after ' + record.stoppedAt + '.' : 'Hit the ' + MAX_PASSES + '-pass cap.'));
+        setStatus('Done in ' + (ms / 1000).toFixed(1) + ' s. ' + verdictLine(record));
       });
     }).catch(function (err) {
       if (token !== state.runToken) return;
       var name = err && err.name;
-      if (name === 'AbortError' || !alive()) {
-        renderNote('Stopped. The transcript above is everything that had run when you pressed Stop.');
-        setStatus('Stopped.');
-        return;
-      }
+      if (name === 'AbortError' || !alive()) { stoppedNote(); return; }
       var msg = (err && err.apiMessage) ? err.message
         : (name === 'TypeError' ? 'The request did not reach api.anthropic.com. Check the network and the key field.'
           : String((err && err.message) || err));
@@ -911,10 +1148,10 @@
 
   els.input.addEventListener('input', updateCounter);
 
-  var sampleButtons = document.querySelectorAll('[data-sample]');
   for (var s = 0; s < sampleButtons.length; s++) {
     (function (btn) {
       btn.addEventListener('click', function () {
+        if (state.running) return;
         els.input.value = sampleText(btn.getAttribute('data-sample'));
         updateCounter();
         setStatus('Sample loaded. Press Run.');
@@ -930,8 +1167,7 @@
     if (state.aborter) { try { state.aborter.abort(); } catch (e) { /* nothing to do */ } }
     state.runToken++;
     setBusy(false);
-    renderNote('Stopped. The transcript above is everything that had run when you pressed Stop.');
-    setStatus('Stopped.');
+    stoppedNote();
   });
 
   els.skip.addEventListener('click', function () {
@@ -940,15 +1176,16 @@
   });
 
   function engineChanged() {
+    if (state.running) return;
     var live = isLive();
     els.livePanel.hidden = !live;
     setStatus(live
       ? 'Live mode. Requests go to api.anthropic.com from this page.'
       : 'Offline critic. Nothing leaves this page.');
   }
-  els.offline.addEventListener('change', engineChanged);
-  els.live.addEventListener('change', engineChanged);
+  for (var r = 0; r < engineRadios.length; r++) engineRadios[r].addEventListener('change', engineChanged);
 
   updateCounter();
   els.livePanel.hidden = !isLive();
+  els.stop.hidden = true;
 })();
