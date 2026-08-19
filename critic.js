@@ -1336,32 +1336,58 @@
 
   /* ------------------------------------------------------------- the verdict */
 
-  // Three outcomes, three sentences, one place they are written. The page used
-  // to phrase this itself and told the reader a run that had used all three of
-  // its three passes had stopped early.
-  //   converged   - a pass found nothing and so did every lens still to come
-  //   cappedClean - that happened on the last pass the cap allowed, or the cap
-  //                 was spent and the final draft turned out clean anyway
+  // Four outcomes, four sentences, one place they are written. This is the last
+  // line the reader sees, so it says what happened in words a stranger reads
+  // without effort: what the draft came out like, and how many of its passes
+  // that took.
+  //
+  //   passesRun   - how many passes actually ran
+  //   maxPasses   - the cap they ran under; defaults to one pass per lens,
+  //                 which is the cap steps() uses when it is given none
+  //   converged   - a pass found nothing and nothing was left to find
+  //   cappedClean - the cap was spent and the final draft came out clean
+  //   unparsed    - passes whose reply could not be read at all (live mode)
+  //
+  // Stopping early is a claim about the cap, not about the last pass: a run
+  // that used every pass it had did not stop early, however clean it ended.
+  // That is why the cap is part of the state, and why passing none assumes the
+  // default cap rather than assuming the run had passes to spare.
+  function passWord(n) { return n === 1 ? '1 pass' : n + ' passes'; }
+
   function verdict(state) {
-    var n = state && state.passesRun;
-    n = (typeof n === 'number' && n > 0) ? Math.floor(n) : 0;
-    if (n === 0) return 'The loop ran no passes, so the draft is unchanged.';
-    var passes = n + (n === 1 ? ' pass' : ' passes');
-    if (state.cappedClean) {
-      return 'The loop ran its full ' + passes + ' and found nothing left to fix.';
+    var s = state || {};
+    var n = (typeof s.passesRun === 'number' && s.passesRun > 0) ? Math.floor(s.passesRun) : 0;
+    var cap = (typeof s.maxPasses === 'number' && s.maxPasses > 0)
+      ? Math.floor(s.maxPasses) : LENSES.length;
+    if (cap < n) cap = n;
+    var unparsed = (typeof s.unparsed === 'number' && s.unparsed > 0) ? Math.floor(s.unparsed) : 0;
+
+    if (n === 0) return 'No passes ran, so the draft is unchanged.';
+    if (unparsed >= n) {
+      return n === 1
+        ? 'The reply could not be read as edits, so the draft is unchanged.'
+        : 'None of the ' + n + ' replies could be read as edits, so the draft is unchanged.';
     }
-    if (state.converged) {
-      return 'The loop stopped early after ' + passes +
-        ': that pass found nothing, and neither did the lenses it still had to run.';
+    if (s.converged && n < cap) {
+      return 'The draft came out clean after ' + passWord(n) + ', with ' +
+        passWord(cap - n) + ' to spare.';
     }
-    return 'The loop ran its full ' + passes + ' and still had findings outstanding.';
+    if (s.cappedClean) {
+      return 'The draft came out clean after ' + passWord(n) + ', with no passes to spare.';
+    }
+    return 'The draft still needs work after ' + passWord(n) +
+      (n >= cap ? ', and there are no passes left.' : '.');
   }
 
   /* -------------------------------------------------------------------- run */
 
   // The loop, one pass at a time, so a caller can yield to the event loop
   // between passes and abort mid-run. Yields the same pass objects run() used to
-  // build; returns { converged, stoppedAt, cappedClean, finalText, passCount }.
+  // build; returns { converged, stoppedEarly, stoppedAt, cappedClean, maxPasses,
+  // finalText, passCount }. stoppedAt is the pass that found the draft clean;
+  // stoppedEarly is the narrower claim verdict() needs — the run ended before
+  // its cap — and a run that used every pass it had is never that, even when
+  // its last pass found nothing.
   // The lookahead is tailClean() — the same function the page calls — over the
   // lens range this run will actually cover, so a one-pass run is not told it
   // failed to converge by a lens it was never going to run. Its results are
@@ -1430,7 +1456,8 @@
     if (passCount > 0 && passCount >= maxPasses) {
       cappedClean = tailClean(current, 0, { before: copts.before }).clean;
     }
-    return { converged: converged, stoppedAt: stoppedAt, cappedClean: cappedClean,
+    return { converged: converged, stoppedEarly: converged && passCount < maxPasses,
+             stoppedAt: stoppedAt, cappedClean: cappedClean, maxPasses: maxPasses,
              finalText: current, passCount: passCount };
   }
 
@@ -1440,7 +1467,8 @@
     var it = steps(text, opts), passes = [], step;
     while (!(step = it.next()).done) passes.push(step.value);
     return { passes: passes, converged: step.value.converged,
-             stoppedAt: step.value.stoppedAt, cappedClean: step.value.cappedClean,
+             stoppedEarly: step.value.stoppedEarly, stoppedAt: step.value.stoppedAt,
+             cappedClean: step.value.cappedClean, maxPasses: step.value.maxPasses,
              finalText: step.value.finalText };
   }
 

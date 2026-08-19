@@ -1203,7 +1203,8 @@
     var it = C.steps(text, opts), passes = [], step;
     while (!(step = it.next()).done) passes.push(step.value);
     return { passes: passes, converged: step.value.converged,
-             stoppedAt: step.value.stoppedAt, cappedClean: step.value.cappedClean,
+             stoppedEarly: step.value.stoppedEarly, stoppedAt: step.value.stoppedAt,
+             cappedClean: step.value.cappedClean, maxPasses: step.value.maxPasses,
              finalText: step.value.finalText, passCount: step.value.passCount };
   }
   var STEP_INPUTS = ['', CLEAN, MESSY, LONG_JOINT, 'The report is somewhat late.',
@@ -1214,7 +1215,8 @@
     record('run() and a drained steps() agree #' + (i + 1),
            JSON.stringify(byRun) === JSON.stringify({
              passes: byStep.passes, converged: byStep.converged,
-             stoppedAt: byStep.stoppedAt, cappedClean: byStep.cappedClean,
+             stoppedEarly: byStep.stoppedEarly, stoppedAt: byStep.stoppedAt,
+             cappedClean: byStep.cappedClean, maxPasses: byStep.maxPasses,
              finalText: byStep.finalText
            }), JSON.stringify(byRun).slice(0, 120), JSON.stringify(byStep).slice(0, 120));
     record('steps() passCount matches the passes it yielded #' + (i + 1),
@@ -1502,58 +1504,158 @@
 
   /* ==================================================================== */
   g('C8 verdict');
-  var V_EARLY = C.verdict({ passesRun: 1, converged: true, cappedClean: false });
-  var V_EARLY2 = C.verdict({ passesRun: 2, converged: true, cappedClean: false });
-  var V_CLEAN = C.verdict({ passesRun: 3, converged: true, cappedClean: true });
-  var V_LEFT = C.verdict({ passesRun: 3, converged: false, cappedClean: false });
+  // Four outcomes, four sentences, one place they are written, and they are the
+  // last line the page shows a reader. Stopping early is a claim about the cap,
+  // not about the last pass: a run that used every pass it had did not stop
+  // early, however clean it ended. So the cap is part of the state verdict()
+  // reads, and a state that carries none is read as the engine's default cap.
+  function P(n) { return n === 1 ? '1 pass' : n + ' passes'; }
+  var V_EARLY = C.verdict({ passesRun: 1, maxPasses: 3, converged: true, cappedClean: false });
+  var V_EARLY2 = C.verdict({ passesRun: 2, maxPasses: 3, converged: true, cappedClean: false });
+  var V_CLEAN = C.verdict({ passesRun: 3, maxPasses: 3, converged: true, cappedClean: true });
+  var V_LEFT = C.verdict({ passesRun: 3, maxPasses: 3, converged: false, cappedClean: false });
+  var V_UNREAD = C.verdict({ passesRun: 3, maxPasses: 3, converged: false, cappedClean: false,
+                             unparsed: 3 });
+  var V_UNREAD1 = C.verdict({ passesRun: 1, maxPasses: 3, converged: false, cappedClean: false,
+                              unparsed: 1 });
   eq('stopped early, one pass', V_EARLY,
-     'The loop stopped early after 1 pass: that pass found nothing, and neither did ' +
-     'the lenses it still had to run.');
+     'The draft came out clean after 1 pass, with 2 passes to spare.');
   eq('stopped early, two passes', V_EARLY2,
-     'The loop stopped early after 2 passes: that pass found nothing, and neither did ' +
-     'the lenses it still had to run.');
+     'The draft came out clean after 2 passes, with 1 pass to spare.');
   eq('reached the cap and is clean', V_CLEAN,
-     'The loop ran its full 3 passes and found nothing left to fix.');
-  eq('reached the cap with findings outstanding', V_LEFT,
-     'The loop ran its full 3 passes and still had findings outstanding.');
-  eq('no passes at all', C.verdict({ passesRun: 0, converged: false, cappedClean: false }),
-     'The loop ran no passes, so the draft is unchanged.');
-  ok('the three outcomes are three different sentences',
-     V_EARLY !== V_CLEAN && V_CLEAN !== V_LEFT && V_EARLY !== V_LEFT);
-  ok('a run that used every pass is never called an early stop',
-     V_CLEAN.indexOf('stopped early') < 0 && V_LEFT.indexOf('stopped early') < 0);
+     'The draft came out clean after 3 passes, with no passes to spare.');
+  eq('reached the cap with work left', V_LEFT,
+     'The draft still needs work after 3 passes, and there are no passes left.');
+  eq('nothing came back that could be read', V_UNREAD,
+     'None of the 3 replies could be read as edits, so the draft is unchanged.');
+  eq('and one reply that could not be read says so in the singular', V_UNREAD1,
+     'The reply could not be read as edits, so the draft is unchanged.');
+  eq('no passes at all', C.verdict({ passesRun: 0, maxPasses: 3, converged: false,
+                                     cappedClean: false }),
+     'No passes ran, so the draft is unchanged.');
+  ok('the four outcomes are four different sentences',
+     [V_EARLY, V_CLEAN, V_LEFT, V_UNREAD].filter(function (v, i, all) {
+       return all.indexOf(v) === i;
+     }).length === 4);
+  // The defect this replaced: a run that used all three of its three passes and
+  // whose last pass found nothing was told it had stopped early. steps() really
+  // does produce that state, so verdict() has to read the cap to tell them apart.
+  eq('a converged run that used every pass is not an early stop',
+     C.verdict({ passesRun: 3, maxPasses: 3, converged: true, cappedClean: false }),
+     'The draft still needs work after 3 passes, and there are no passes left.');
+  eq('the same state one pass under the cap is an early stop',
+     C.verdict({ passesRun: 2, maxPasses: 3, converged: true, cappedClean: false }), V_EARLY2);
+  eq('and a cap of one pass never reports an early stop',
+     C.verdict({ passesRun: 1, maxPasses: 1, converged: true, cappedClean: false }),
+     'The draft still needs work after 1 pass, and there are no passes left.');
+  // Every combination of the four flags, cap included. Only a state with passes
+  // to spare may be worded as an early stop, and none of them may use the old
+  // machine talk.
+  // "with no passes to spare" is the cap-reaching sentence; only a count of
+  // passes left over is a claim that the run stopped early.
+  var EARLY_CLAIM_RE = /with \d+ passe?s? to spare/;
+  var earlyClaims = [], jargonClaims = [], shapeClaims = [];
+  var JARGON_WORDS = ['lens', 'lenses', 'lookahead', 'outstanding', 'converge', 'unparse'];
+  [0, 1, 2, 3].forEach(function (n) {
+    [1, 2, 3].forEach(function (cap) {
+      if (n > cap) return;
+      [false, true].forEach(function (conv) {
+        [false, true].forEach(function (capped) {
+          [0, 1, n].forEach(function (unp) {
+            var line = C.verdict({ passesRun: n, maxPasses: cap, converged: conv,
+                                   cappedClean: capped, unparsed: unp });
+            var tag = n + '/' + cap + '/' + conv + '/' + capped + '/' + unp + ': ' + line;
+            if (EARLY_CLAIM_RE.test(line) && n >= cap) earlyClaims.push(tag);
+            if (line.indexOf('early') >= 0) earlyClaims.push(tag);
+            JARGON_WORDS.forEach(function (w) {
+              if (line.toLowerCase().indexOf(w) >= 0) jargonClaims.push(w + ' in ' + tag);
+            });
+            if (!(line.charAt(line.length - 1) === '.' && line.indexOf('.') === line.length - 1 &&
+                  line.length > 20)) shapeClaims.push(tag);
+          });
+        });
+      });
+    });
+  });
+  record('no sentence claims an early stop when the run used its whole cap',
+         earlyClaims.length === 0, 'none', earlyClaims.length ? earlyClaims[0] : 'none');
+  record('no sentence talks about lenses, lookaheads or outstanding items',
+         jargonClaims.length === 0, 'none', jargonClaims.length ? jargonClaims[0] : 'none');
+  record('every sentence is one plain sentence', shapeClaims.length === 0, 'none',
+         shapeClaims.length ? shapeClaims[0] : 'none');
   ok('singular and plural are both right',
-     V_EARLY.indexOf('1 pass:') > 0 && V_EARLY.indexOf('1 passes') < 0 &&
-     V_EARLY2.indexOf('2 passes') > 0 &&
-     C.verdict({ passesRun: 1, converged: false, cappedClean: true })
-       .indexOf('full 1 pass ') > 0);
-  ok('every verdict is one sentence', [V_EARLY, V_EARLY2, V_CLEAN, V_LEFT].every(function (v) {
-    return v.charAt(v.length - 1) === '.' && v.indexOf('.') === v.length - 1;
-  }));
-  // Each of the three outcomes, reached for real by the engine rather than by
-  // handing verdict() a made-up state.
+     V_EARLY.indexOf('after 1 pass,') > 0 && V_EARLY.indexOf('1 passes') < 0 &&
+     V_EARLY.indexOf('with 2 passes to spare') > 0 &&
+     V_EARLY2.indexOf('with 1 pass to spare') > 0 &&
+     C.verdict({ passesRun: 1, maxPasses: 1, converged: false, cappedClean: true })
+       .indexOf('after 1 pass, with no passes') > 0);
+  ok('a state with no cap is read as the default cap, not as passes to spare',
+     C.verdict({ passesRun: 3, converged: true, cappedClean: false }) === V_LEFT &&
+     C.verdict({ passesRun: 1, converged: true, cappedClean: false }) === V_EARLY);
+  ok('a cap smaller than the passes that ran is not believed',
+     !/with \d+ passe?s? to spare/.test(
+       C.verdict({ passesRun: 3, maxPasses: 1, converged: true, cappedClean: false })));
+  // Every state steps() can actually reach, taken from real runs rather than
+  // made up, with the sentence for each written out by hand from the four flags.
+  var CAP_TEXTS = [['a clean draft', CLEAN], ['a draft cleaned on a later pass',
+    'The report is somewhat late.'], ['a messy draft', MESSY], ['an empty draft', '']];
+  var comboSeen = {};
+  [0, 1, 2, 3].forEach(function (cap) {
+    CAP_TEXTS.forEach(function (t) {
+      var r = C.run(t[1], { maxPasses: cap });
+      var n = r.passes.length;
+      var line = C.verdict({ passesRun: n, maxPasses: r.maxPasses, converged: r.converged,
+                             cappedClean: r.cappedClean });
+      var want;
+      if (n === 0) want = 'No passes ran, so the draft is unchanged.';
+      else if (r.converged && n < cap) {
+        want = 'The draft came out clean after ' + P(n) + ', with ' + P(cap - n) + ' to spare.';
+      } else if (r.cappedClean) {
+        want = 'The draft came out clean after ' + P(n) + ', with no passes to spare.';
+      } else {
+        want = 'The draft still needs work after ' + P(n) + ', and there are no passes left.';
+      }
+      comboSeen[[n, r.maxPasses, r.converged, r.cappedClean].join('|')] = true;
+      record('cap ' + cap + ', ' + t[0] + ': ' + [n, r.maxPasses, r.converged,
+             r.cappedClean].join('/'), line === want, want, line);
+      record('cap ' + cap + ', ' + t[0] + ': stoppedEarly matches the cap',
+             r.stoppedEarly === (r.converged && n < r.maxPasses),
+             String(r.converged && n < r.maxPasses), String(r.stoppedEarly));
+      record('cap ' + cap + ', ' + t[0] + ': no early stop when the cap was spent',
+             n < cap || !EARLY_CLAIM_RE.test(line), 'no passes claimed to spare', line);
+    });
+  });
+  ok('the run sweep really reached several distinct states',
+     Object.keys(comboSeen).length >= 6);
+  ok('steps() never reports a stoppedEarly it did not make',
+     C.run(CLEAN, { maxPasses: 1 }).stoppedEarly === false &&
+     C.run(CLEAN, { maxPasses: 3 }).stoppedEarly === true);
+  ok('and it reports the cap it ran under',
+     C.run(CLEAN).maxPasses === 3 && C.run(CLEAN, { maxPasses: 2 }).maxPasses === 2);
+  // Each outcome reached for real by the engine rather than by handing verdict()
+  // a made-up state.
   var vEarly = C.run(CLEAN);
   var vClean = C.run('The report is somewhat late.');
   var vLeft = messy;
   eq('a clean draft really does stop early',
-     C.verdict({ passesRun: vEarly.passes.length, converged: vEarly.converged,
-                 cappedClean: vEarly.cappedClean }), V_EARLY);
+     C.verdict({ passesRun: vEarly.passes.length, maxPasses: vEarly.maxPasses,
+                 converged: vEarly.converged, cappedClean: vEarly.cappedClean }), V_EARLY);
   eq('a draft cleaned on the last pass really does reach the cap clean',
-     C.verdict({ passesRun: vClean.passes.length, converged: vClean.converged,
-                 cappedClean: vClean.cappedClean }), V_CLEAN);
-  eq('a draft with pointers left really does reach the cap with work outstanding',
-     C.verdict({ passesRun: vLeft.passes.length, converged: vLeft.converged,
-                 cappedClean: vLeft.cappedClean }), V_LEFT);
+     C.verdict({ passesRun: vClean.passes.length, maxPasses: vClean.maxPasses,
+                 converged: vClean.converged, cappedClean: vClean.cappedClean }), V_CLEAN);
+  eq('a draft with pointers left really does reach the cap with work left',
+     C.verdict({ passesRun: vLeft.passes.length, maxPasses: vLeft.maxPasses,
+                 converged: vLeft.converged, cappedClean: vLeft.cappedClean }), V_LEFT);
   ok('cappedClean is false when the loop stopped early', vEarly.cappedClean === false);
   ok('cappedClean is true when the cap was reached with nothing left', vClean.cappedClean === true);
-  ok('cappedClean is false when findings are outstanding', vLeft.cappedClean === false);
-  ok('and the outstanding findings are real',
+  ok('cappedClean is false when findings are left', vLeft.cappedClean === false);
+  ok('and the findings that are left are real',
      C.critique(vLeft.finalText, 'clarity').findings.length +
      C.critique(vLeft.finalText, 'concreteness').findings.length > 0);
   // The wording lives in exactly one function. Every other exported function is
   // read back through Function.prototype.toString and must not contain it.
-  var VERDICT_WORDS = ['stopped early', 'found nothing left to fix',
-                       'still had findings outstanding', 'ran no passes', 'ran its full'];
+  var VERDICT_WORDS = ['came out clean after', 'to spare', 'still needs work',
+                       'could not be read as edits', 'No passes ran'];
   ok('verdict() carries the wording', VERDICT_WORDS.every(function (w) {
     return String(C.verdict).indexOf(w) >= 0;
   }));
