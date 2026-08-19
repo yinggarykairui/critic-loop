@@ -11,8 +11,9 @@ shown between every draft — the part a diagram of this pattern always leaves o
 
 The page runs the draft → critique → revise loop and renders every intermediate state: draft 0,
 critique 1, draft 1, critique 2, draft 2, critique 3, draft 3. Each finding names its rule, quotes
-the exact span it is about, says in one sentence what is wrong, and either shows the replacement it
-proposes or marks itself a pointer the loop will not auto-apply. Six of the twelve rules only point:
+the span it is about — elided at a word boundary above 400 characters, with a note saying how much
+was elided — says in one sentence what is wrong, and either shows the replacement it proposes or
+marks itself a pointer the loop will not auto-apply. Six of the twelve rules only point:
 where a rewrite would change the meaning or the grammar, the critic says so instead of guessing.
 Each draft carries a metrics strip — edits applied, words, sentences, hedges, and mean sentence
 length when a draft has more than one sentence — with the delta from the draft before it, and a
