@@ -1214,27 +1214,82 @@
     return out;
   }
 
+  /* ------------------------------------------------------- convergence rule */
+
+  // Convergence is not "this lens found nothing". A draft whose only fault is
+  // hedges reported one clean clarity pass as the end of the loop, next to a
+  // metrics strip reading HEDGES 5. A pass that finds nothing therefore has to
+  // put the same unchanged text in front of every lens it has not run yet, and
+  // the loop ends only when all of them are clean too.
+  //
+  // This is the only implementation of that question in the project. The page
+  // used to carry a second one for its live and chunked paths, and the two
+  // disagreed on exactly the runs that matter, so the decision is exported:
+  // a caller passes the index of the next lens it would run and gets back both
+  // the answer and the findings behind it — one entry per lens, in lens order —
+  // so nothing has to be critiqued twice to act on it.
+  //
+  // opts.through (default: every lens) is the exclusive end of the range the
+  // caller will actually cover. A run capped at one pass looks ahead at nothing,
+  // because it has no second lens in its future that could still be dirty.
+  // opts.atTextStart is passed through to critique().
+  function tailClean(text, nextLensIndex, opts) {
+    text = toText(text);
+    var i = Math.floor(Number(nextLensIndex));
+    if (!(i > 0)) i = 0;
+    var through = (opts && typeof opts.through === 'number')
+      ? Math.floor(opts.through) : LENSES.length;
+    if (through > LENSES.length) through = LENSES.length;
+    var results = [], clean = true, r;
+    for (; i < through; i++) {
+      r = critique(text, LENSES[i].id, opts);
+      results.push({ lens: LENSES[i].id, findings: r.findings });
+      if (r.findings.length > 0) clean = false;
+    }
+    return { clean: clean, results: results };
+  }
+
+  /* ------------------------------------------------------------- the verdict */
+
+  // Three outcomes, three sentences, one place they are written. The page used
+  // to phrase this itself and told the reader a run that had used all three of
+  // its three passes had stopped early.
+  //   converged   - a pass found nothing and so did every lens still to come
+  //   cappedClean - that happened on the last pass the cap allowed, or the cap
+  //                 was spent and the final draft turned out clean anyway
+  function verdict(state) {
+    var n = state && state.passesRun;
+    n = (typeof n === 'number' && n > 0) ? Math.floor(n) : 0;
+    if (n === 0) return 'The loop ran no passes, so the draft is unchanged.';
+    var passes = n + (n === 1 ? ' pass' : ' passes');
+    if (state.cappedClean) {
+      return 'The loop ran its full ' + passes + ' and found nothing left to fix.';
+    }
+    if (state.converged) {
+      return 'The loop stopped early after ' + passes +
+        ': that pass found nothing, and neither did the lenses it still had to run.';
+    }
+    return 'The loop ran its full ' + passes + ' and still had findings outstanding.';
+  }
+
   /* -------------------------------------------------------------------- run */
 
   // The loop, one pass at a time, so a caller can yield to the event loop
   // between passes and abort mid-run. Yields the same pass objects run() used to
-  // build; returns { converged, stoppedAt, finalText, passCount }.
-  //
-  // Convergence is not "this lens found nothing". A draft whose only fault is
-  // hedges reported "converged after 1 pass" next to a metrics strip reading
-  // HEDGES 5, because clarity ran first and found nothing. A pass that finds
-  // nothing therefore checks every lens it has not run yet against the same
-  // unchanged text, and only stops when all of them are clean too. The results
-  // of that check are cached: the next pass reads the same text, so it never
-  // critiques it twice.
+  // build; returns { converged, stoppedAt, cappedClean, finalText, passCount }.
+  // The lookahead is tailClean() — the same function the page calls — over the
+  // lens range this run will actually cover, so a one-pass run is not told it
+  // failed to converge by a lens it was never going to run. Its results are
+  // cached: the next pass reads the same text, so it never critiques it twice.
   function* steps(text, opts) {
     text = toText(text);
     var maxPasses = (opts && typeof opts.maxPasses === 'number') ? opts.maxPasses : 3;
     if (!(maxPasses > 0)) maxPasses = 0;
     maxPasses = Math.min(Math.floor(maxPasses), LENSES.length);
-    var copts = { atTextStart: !(opts && opts.atTextStart === false) };
+    var copts = { atTextStart: !(opts && opts.atTextStart === false), through: maxPasses };
 
-    var current = text, converged = false, stoppedAt = null, passCount = 0, i, j;
+    var current = text, converged = false, stoppedAt = null, cappedClean = false;
+    var passCount = 0, i, j;
     // metrics() walks the whole text; the previous pass's "after" is this
     // pass's "before", so it is computed once per distinct draft, not twice.
     var mBefore = maxPasses > 0 ? metrics(current) : null;
@@ -1246,23 +1301,29 @@
       if (!hit) { hit = critique(t, lensId, copts); cache.set(lensId, hit); }
       return hit;
     }
+    function keep(t, entry) {
+      if (cacheText !== t) { cache.clear(); cacheText = t; }
+      if (!cache.has(entry.lens)) cache.set(entry.lens, { lens: entry.lens, findings: entry.findings });
+    }
 
     for (i = 0; i < maxPasses; i++) {
       var lens = LENSES[i];
       var before = current;
       var res = look(before, lens.id);
       if (res.findings.length === 0) {
-        var clean = true;
-        for (j = i + 1; j < LENSES.length; j++) {
-          if (look(before, LENSES[j].id).findings.length > 0) { clean = false; break; }
-        }
+        var ahead = tailClean(before, i + 1, copts);
+        for (j = 0; j < ahead.results.length; j++) keep(before, ahead.results[j]);
         yield {
           index: i, lens: lens.id, lensName: lens.name, findings: [],
           before: before, after: before, applied: 0,
           metricsBefore: mBefore, metricsAfter: mBefore
         };
         passCount++;
-        if (clean) { converged = true; stoppedAt = i + 1; break; }
+        if (ahead.clean) {
+          converged = true;
+          stoppedAt = i + 1;
+          break;
+        }
         continue; // a later lens still has work: this pass was not the end
       }
       var applied = applyFindings(before, res.findings);
@@ -1276,7 +1337,15 @@
       current = applied.text;
       mBefore = mAfter;
     }
-    return { converged: converged, stoppedAt: stoppedAt,
+    // The cap is spent. "Is anything left to find" is then a question about the
+    // draft, not about the schedule, so it is asked of the final text and of
+    // every lens — the last pass rewrote the text, so no earlier answer covers
+    // it, and a run capped below three lenses must not call a draft clean on
+    // the strength of the one lens it happened to run.
+    if (passCount > 0 && passCount >= maxPasses) {
+      cappedClean = tailClean(current, 0, { atTextStart: copts.atTextStart }).clean;
+    }
+    return { converged: converged, stoppedAt: stoppedAt, cappedClean: cappedClean,
              finalText: current, passCount: passCount };
   }
 
@@ -1286,7 +1355,8 @@
     var it = steps(text, opts), passes = [], step;
     while (!(step = it.next()).done) passes.push(step.value);
     return { passes: passes, converged: step.value.converged,
-             stoppedAt: step.value.stoppedAt, finalText: step.value.finalText };
+             stoppedAt: step.value.stoppedAt, cappedClean: step.value.cappedClean,
+             finalText: step.value.finalText };
   }
 
   /* ----------------------------------------------------------------- export */
@@ -1298,6 +1368,8 @@
     metrics: metrics,
     diffWords: diffWords,
     steps: steps,
-    run: run
+    run: run,
+    tailClean: tailClean,
+    verdict: verdict
   };
 })(typeof window !== 'undefined' ? window : this);

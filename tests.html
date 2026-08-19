@@ -136,7 +136,8 @@
   })(), ['CriticLoop']);
   eq('the one global exports exactly the documented surface',
      Object.keys(C).sort(),
-     ['LENSES', 'applyFindings', 'critique', 'diffWords', 'metrics', 'run', 'steps'].sort());
+     ['LENSES', 'applyFindings', 'critique', 'diffWords', 'metrics', 'run', 'steps',
+      'tailClean', 'verdict'].sort());
   ok('LENSES is an array of 3', Array.isArray(C.LENSES) && C.LENSES.length === 3);
   eq('LENSES ids in loop order', C.LENSES.map(function (l) { return l.id; }), LENS_IDS);
   eq('LENSES names are title case', C.LENSES.map(function (l) { return l.name; }),
@@ -1009,8 +1010,8 @@
     var it = C.steps(text, opts), passes = [], step;
     while (!(step = it.next()).done) passes.push(step.value);
     return { passes: passes, converged: step.value.converged,
-             stoppedAt: step.value.stoppedAt, finalText: step.value.finalText,
-             passCount: step.value.passCount };
+             stoppedAt: step.value.stoppedAt, cappedClean: step.value.cappedClean,
+             finalText: step.value.finalText, passCount: step.value.passCount };
   }
   var STEP_INPUTS = ['', CLEAN, MESSY, LONG_JOINT, 'The report is somewhat late.',
     'The team will leverage the cache.'];
@@ -1020,7 +1021,8 @@
     record('run() and a drained steps() agree #' + (i + 1),
            JSON.stringify(byRun) === JSON.stringify({
              passes: byStep.passes, converged: byStep.converged,
-             stoppedAt: byStep.stoppedAt, finalText: byStep.finalText
+             stoppedAt: byStep.stoppedAt, cappedClean: byStep.cappedClean,
+             finalText: byStep.finalText
            }), JSON.stringify(byRun).slice(0, 120), JSON.stringify(byStep).slice(0, 120));
     record('steps() passCount matches the passes it yielded #' + (i + 1),
            byStep.passCount === byStep.passes.length, String(byStep.passes.length),
@@ -1220,6 +1222,124 @@
       });
     });
   })());
+
+  /* ==================================================================== */
+  g('C8 verdict');
+  var V_EARLY = C.verdict({ passesRun: 1, converged: true, cappedClean: false });
+  var V_EARLY2 = C.verdict({ passesRun: 2, converged: true, cappedClean: false });
+  var V_CLEAN = C.verdict({ passesRun: 3, converged: true, cappedClean: true });
+  var V_LEFT = C.verdict({ passesRun: 3, converged: false, cappedClean: false });
+  eq('stopped early, one pass', V_EARLY,
+     'The loop stopped early after 1 pass: that pass found nothing, and neither did ' +
+     'the lenses it still had to run.');
+  eq('stopped early, two passes', V_EARLY2,
+     'The loop stopped early after 2 passes: that pass found nothing, and neither did ' +
+     'the lenses it still had to run.');
+  eq('reached the cap and is clean', V_CLEAN,
+     'The loop ran its full 3 passes and found nothing left to fix.');
+  eq('reached the cap with findings outstanding', V_LEFT,
+     'The loop ran its full 3 passes and still had findings outstanding.');
+  eq('no passes at all', C.verdict({ passesRun: 0, converged: false, cappedClean: false }),
+     'The loop ran no passes, so the draft is unchanged.');
+  ok('the three outcomes are three different sentences',
+     V_EARLY !== V_CLEAN && V_CLEAN !== V_LEFT && V_EARLY !== V_LEFT);
+  ok('a run that used every pass is never called an early stop',
+     V_CLEAN.indexOf('stopped early') < 0 && V_LEFT.indexOf('stopped early') < 0);
+  ok('singular and plural are both right',
+     V_EARLY.indexOf('1 pass:') > 0 && V_EARLY.indexOf('1 passes') < 0 &&
+     V_EARLY2.indexOf('2 passes') > 0 &&
+     C.verdict({ passesRun: 1, converged: false, cappedClean: true })
+       .indexOf('full 1 pass ') > 0);
+  ok('every verdict is one sentence', [V_EARLY, V_EARLY2, V_CLEAN, V_LEFT].every(function (v) {
+    return v.charAt(v.length - 1) === '.' && v.indexOf('.') === v.length - 1;
+  }));
+  // Each of the three outcomes, reached for real by the engine rather than by
+  // handing verdict() a made-up state.
+  var vEarly = C.run(CLEAN);
+  var vClean = C.run('The report is somewhat late.');
+  var vLeft = messy;
+  eq('a clean draft really does stop early',
+     C.verdict({ passesRun: vEarly.passes.length, converged: vEarly.converged,
+                 cappedClean: vEarly.cappedClean }), V_EARLY);
+  eq('a draft cleaned on the last pass really does reach the cap clean',
+     C.verdict({ passesRun: vClean.passes.length, converged: vClean.converged,
+                 cappedClean: vClean.cappedClean }), V_CLEAN);
+  eq('a draft with pointers left really does reach the cap with work outstanding',
+     C.verdict({ passesRun: vLeft.passes.length, converged: vLeft.converged,
+                 cappedClean: vLeft.cappedClean }), V_LEFT);
+  ok('cappedClean is false when the loop stopped early', vEarly.cappedClean === false);
+  ok('cappedClean is true when the cap was reached with nothing left', vClean.cappedClean === true);
+  ok('cappedClean is false when findings are outstanding', vLeft.cappedClean === false);
+  ok('and the outstanding findings are real',
+     C.critique(vLeft.finalText, 'clarity').findings.length +
+     C.critique(vLeft.finalText, 'concreteness').findings.length > 0);
+  // The wording lives in exactly one function. Every other exported function is
+  // read back through Function.prototype.toString and must not contain it.
+  var VERDICT_WORDS = ['stopped early', 'found nothing left to fix',
+                       'still had findings outstanding', 'ran no passes', 'ran its full'];
+  ok('verdict() carries the wording', VERDICT_WORDS.every(function (w) {
+    return String(C.verdict).indexOf(w) >= 0;
+  }));
+  ok('and no other export writes a verdict of its own',
+     ['critique', 'applyFindings', 'metrics', 'diffWords', 'steps', 'run', 'tailClean']
+       .every(function (name) {
+         var src = String(C[name]);
+         return VERDICT_WORDS.every(function (w) { return src.indexOf(w) < 0; });
+       }));
+
+  /* ==================================================================== */
+  g('C9 tailClean');
+  eq('tailClean returns {clean, results}', Object.keys(C.tailClean(CLEAN, 0)).sort(),
+     ['clean', 'results']);
+  eq('one entry per lens from the index to the end',
+     C.tailClean(CLEAN, 0).results.map(function (r) { return r.lens; }), LENS_IDS);
+  eq('starting later runs fewer lenses',
+     C.tailClean(CLEAN, 2).results.map(function (r) { return r.lens; }), ['economy']);
+  eq('past the last lens there is nothing to run', C.tailClean(MESSY, 3).results, []);
+  ok('and nothing to run is clean', C.tailClean(MESSY, 3).clean === true);
+  ok('a clean draft is clean from index 0', C.tailClean(CLEAN, 0).clean === true);
+  var HEDGED2 = 'The report is somewhat late.';
+  ok('a hedged draft is not clean from index 0', C.tailClean(HEDGED2, 0).clean === false);
+  ok('nor from the lens that catches it', C.tailClean(HEDGED2, 1).clean === false);
+  ok('but is clean past that lens', C.tailClean(HEDGED2, 2).clean === true);
+  eq('the findings handed back are the findings critique() would give',
+     JSON.stringify(C.tailClean(HEDGED2, 0).results.map(function (r) { return r.findings; })),
+     JSON.stringify(LENS_IDS.map(function (l) { return C.critique(HEDGED2, l).findings; })));
+  ok('a garbage index is treated as 0',
+     C.tailClean(HEDGED2, -4).results.length === 3 &&
+     C.tailClean(HEDGED2, NaN).results.length === 3);
+  eq('through caps the range',
+     C.tailClean(HEDGED2, 1, { through: 2 }).results.map(function (r) { return r.lens; }),
+     ['concreteness']);
+  // atTextStart:false says "offset 0 is mid-sentence", so the hedge is cut
+  // without handing the capital to the next word.
+  ok('atTextStart rides through to critique()',
+     C.tailClean('basically fine.', 1, { atTextStart: false })
+       .results[0].findings[0].replacement === '' &&
+     C.tailClean('basically fine.', 1).results[0].findings[0].replacement === 'F');
+  // The loop's convergence decision is this function and nothing else.
+  ['', CLEAN, MESSY, HEDGED2, 'The team will leverage the cache.', LONG_JOINT]
+    .forEach(function (t, i) {
+      var r = C.run(t);
+      var last = r.passes.length ? r.passes[r.passes.length - 1] : null;
+      var expect = last !== null && last.findings.length === 0 &&
+        C.tailClean(last.after, last.index + 1).clean;
+      record('run agrees with tailClean about convergence #' + (i + 1),
+             r.converged === expect, String(expect), String(r.converged));
+    });
+  // The lookahead used to span all three lenses whatever the cap, so a one-pass
+  // run with nothing left to do reported that it had not converged.
+  var capped = C.run('The team will leverage the cache.', { maxPasses: 1 });
+  eq('a capped run rewrites what its one lens can', capped.finalText,
+     'The team will use the cache.');
+  var cappedDone = C.run('The team will use the cache.', { maxPasses: 1 });
+  ok('a one-pass run with nothing left to do has converged', cappedDone.converged === true);
+  eq('and says so at pass 1', cappedDone.stoppedAt, 1);
+  ok('a one-pass run only looks ahead at lenses it would run',
+     C.tailClean('The report is somewhat late.', 1, { through: 1 }).clean === true &&
+     C.tailClean('The report is somewhat late.', 1).clean === false);
+  ok('cappedClean still checks every lens, not just the ones the cap allowed',
+     C.run('The report is somewhat late.', { maxPasses: 1 }).cappedClean === false);
 
   /* ==================================================================== */
   g('performance');
