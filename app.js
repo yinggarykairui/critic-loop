@@ -456,6 +456,12 @@
 
     var body = el('div');
     var controls = el('div', 'diff-controls');
+    /* One toggle between the word diff and the clean text. Its name does not move and
+       aria-pressed carries the state: pressed means the clean text is the thing on screen,
+       unpressed means the diff is. A name that flips with the state while aria-pressed
+       flips too says two contradictory things at once — "Show clean text" pressed, with
+       the diff showing — so the name stays put and the state is the part that moves.
+       The pressed state is drawn as well as exposed; see the stylesheet. */
     var toggle = el('button', 'btn btn-quiet', 'Show clean text');
     toggle.type = 'button';
     var legend = el('span', 'diff-legend', '− struck through = removed · + underlined = added');
@@ -480,8 +486,7 @@
             'Showing the first ' + count(DRAFT_DISPLAY_CHARS) + ' of ' +
             count(shown.total) + ' characters.'));
         }
-        toggle.textContent = mode === 'diff' ? 'Show clean text' : 'Show diff';
-        toggle.setAttribute('aria-pressed', mode === 'diff' ? 'true' : 'false');
+        toggle.setAttribute('aria-pressed', mode === 'clean' ? 'true' : 'false');
         legend.hidden = mode !== 'diff';
       };
       toggle.addEventListener('click', function () {

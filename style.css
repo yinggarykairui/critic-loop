@@ -194,6 +194,15 @@ textarea.is-locked { background: var(--disabled-bg); cursor: default; }
   cursor: progress;
 }
 .btn-quiet { background: transparent; }
+/* A toggle button keeps its name in both positions and says which position it is in with
+   aria-pressed, so the pressed position has to be drawn as well as exposed: the quote fill
+   the page already uses for a stepped-away surface, an accent boundary, and a heavier
+   name. The boundary is what carries it — its ratios are in the audit. */
+.btn[aria-pressed="true"] {
+  background: var(--quote);
+  border-color: var(--accent);
+  font-weight: 600;
+}
 .btn:disabled {
   background: var(--disabled-bg);
   color: var(--disabled-text);
