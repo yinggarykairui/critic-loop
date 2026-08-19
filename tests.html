@@ -34,6 +34,12 @@
 <h2>Groups</h2>
 <table id="groups"></table>
 
+<script>
+  // Snapshot before critic.js is parsed. `var` creates its own property at
+  // script-evaluation time, so the name is inside its own snapshot and the
+  // difference below is exactly what critic.js added.
+  var GLOBALS_BEFORE = Object.getOwnPropertyNames(window);
+</script>
 <script src="critic.js"></script>
 <script>
 (function () {
@@ -120,10 +126,17 @@
   /* ==================================================================== */
   g('contract');
   ok('window.CriticLoop exists', C && typeof C === 'object');
-  ok('no stray globals introduced (CriticLoop only)',
-     typeof window.LENSES === 'undefined' && typeof window.critique === 'undefined' &&
-     typeof window.metrics === 'undefined' && typeof window.diffWords === 'undefined' &&
-     typeof window.applyFindings === 'undefined' && typeof window.run === 'undefined');
+  eq('critic.js adds exactly one global', (function () {
+    var before = {}, added = [];
+    GLOBALS_BEFORE.forEach(function (n) { before[n] = true; });
+    Object.getOwnPropertyNames(window).forEach(function (n) {
+      if (!before[n] && n !== 'GLOBALS_BEFORE') added.push(n);
+    });
+    return added.sort();
+  })(), ['CriticLoop']);
+  eq('the one global exports exactly the documented surface',
+     Object.keys(C).sort(),
+     ['LENSES', 'applyFindings', 'critique', 'diffWords', 'metrics', 'run', 'steps'].sort());
   ok('LENSES is an array of 3', Array.isArray(C.LENSES) && C.LENSES.length === 3);
   eq('LENSES ids in loop order', C.LENSES.map(function (l) { return l.id; }), LENS_IDS);
   eq('LENSES names are title case', C.LENSES.map(function (l) { return l.name; }),
@@ -137,6 +150,7 @@
   ok('metrics is a function', typeof C.metrics === 'function');
   ok('diffWords is a function', typeof C.diffWords === 'function');
   ok('run is a function', typeof C.run === 'function');
+  ok('steps is a function', typeof C.steps === 'function');
   eq('critique returns {lens, findings}', Object.keys(C.critique('hi', 'clarity')).sort(),
      ['findings', 'lens']);
   eq('critique echoes the lens id', C.critique('hi', 'economy').lens, 'economy');
@@ -159,31 +173,49 @@
      findingFor(LONG_NO_JOINT, 'clarity', 'long-sentence').why.indexOf('33 words') >= 0);
   ok('long-sentence quotes the whole sentence when it cannot split',
      findingFor(LONG_NO_JOINT, 'clarity', 'long-sentence').quote === LONG_NO_JOINT);
-  eq('long-sentence splits at ", and" into a full stop',
-     findingFor(LONG_JOINT, 'clarity', 'long-sentence').replacement, '. A');
-  revises('long sentence split at the joint', LONG_JOINT, 'clarity',
-    'The parser reads the file line by line. After that it checks every token against ' +
-    'the lookup table before handing the finished result to the writer process on disk.');
-  silent('joint too close to the edge, 30 words',
+  // A sentence with a ", and" joint used to be split there. Splitting a
+  // coordination strands the second half without a subject, so the rule points
+  // at every long sentence and rewrites none of them.
+  eq('long-sentence never proposes a split, joint or no joint',
+     findingFor(LONG_JOINT, 'clarity', 'long-sentence').replacement, null);
+  ok('long-sentence quotes the whole sentence at a joint too',
+     findingFor(LONG_JOINT, 'clarity', 'long-sentence').quote === LONG_JOINT);
+  revises('a sentence with a ", and" joint is left alone', LONG_JOINT, 'clarity', LONG_JOINT);
+  silent('a 24-word sentence is not long',
      'Although the parser reads every single file that the crawler hands over, and the writer waits, the disk queue stays completely empty until then.',
      'clarity', 'long-sentence');
 
-  fires('three subordinate markers',
-    'The build that failed is the one which shipped while the queue drained.', 'clarity', 'clause-stack');
+  // 25 words, three markers (which / although / while).
+  var STACKED = 'The build that failed last night is the one which shipped on Friday, ' +
+    'although the queue drained slowly while the writer waited for the disk.';
+  fires('three markers in a 25-word sentence', STACKED, 'clarity', 'clause-stack');
   silent('two subordinate markers',
     'The build that failed is the one which shipped.', 'clarity', 'clause-stack');
-  eq('clause-stack only points', findingFor(
-    'The build that failed is the one which shipped while the queue drained.',
-    'clarity', 'clause-stack').replacement, null);
+  // Three markers inside nine words is a tic, not a stack of clauses.
+  silent('three markers in a nine-word sentence',
+    'We know that that is the file that works.', 'clarity', 'clause-stack');
+  eq('clause-stack only points',
+     findingFor(STACKED, 'clarity', 'clause-stack').replacement, null);
+  ok('clause-stack why names the sentence length',
+     findingFor(STACKED, 'clarity', 'clause-stack').why.indexOf('25-word') >= 0);
 
   fires('implementation', 'The implementation took a week.', 'clarity', 'nominalisation');
   silent('the plain verb', 'The team will build it in a week.', 'clarity', 'nominalisation');
-  eq('nominalisation swaps in the verb',
-     findingFor('The implementation took a week.', 'clarity', 'nominalisation').replacement, 'build');
-  eq('nominalisation keeps a leading capital',
-     findingFor('Implementation took a week.', 'clarity', 'nominalisation').replacement, 'Build');
-  revises('utilisation and optimisation', 'Utilisation of the optimisation is documentation.',
-     'clarity', 'Use of the speed up is docs.');
+  // Swapping the noun for its verb changes the part of speech, and the sentence
+  // around it stops agreeing: "Our documentation is thin" came back as "Our docs
+  // is thin". The rule names the buried verb and rewrites nothing.
+  eq('nominalisation only points',
+     findingFor('The implementation took a week.', 'clarity', 'nominalisation').replacement, null);
+  ok('nominalisation why names the buried verb',
+     findingFor('The implementation took a week.', 'clarity', 'nominalisation')
+       .why.indexOf('\u201cbuild\u201d') >= 0);
+  revises('a sentence of nominalisations is left alone',
+     'Utilisation of the optimisation is documentation.', 'clarity',
+     'Utilisation of the optimisation is documentation.');
+  revises('a noun subject keeps its verb agreement', 'Our documentation is thin.', 'clarity',
+     'Our documentation is thin.');
+  revises('a nominalisation subject is not turned into a verb phrase',
+     'Compliance requires documentation.', 'clarity', 'Compliance requires documentation.');
 
   fires('leverage', 'We leverage the cache.', 'clarity', 'jargon');
   silent('a word merely containing a buzzword', 'The robustness of the parser is measured.',
@@ -193,8 +225,38 @@
   revises('multi-word jargon', 'Going forward we pick the low-hanging fruit.', 'clarity',
      'From now on we pick the easy wins.');
   revises('a gloss with an article does not double it up',
-     'The team told the stakeholders about the low-hanging fruit.', 'clarity',
-     'The team told the people affected about the easy wins.');
+     'We should start on the low-hanging fruit.', 'clarity',
+     'We should start on the easy wins.');
+  // A capital is a name unless the sentence just started.
+  silent('a capitalised jargon word mid-sentence is a name',
+     'The vendor is Robust Systems Inc.', 'clarity', 'jargon');
+  revises('a capitalised jargon word mid-sentence is left alone',
+     'The vendor is Robust Systems Inc.', 'clarity', 'The vendor is Robust Systems Inc.');
+  silent('a sentence-initial capital followed by another capital is a name',
+     'Robust Systems Inc. shipped the parser.', 'clarity', 'jargon');
+  fires('a sentence-initial capital before a lowercase word still fires',
+     'Robust systems fail quietly.', 'clarity', 'jargon');
+  // Quoted material is mentioned, not used.
+  silent('a quoted jargon word is being talked about',
+     'The word "robust" is overused.', 'clarity', 'jargon');
+  revises('a quoted jargon word survives verbatim', 'The word "robust" is overused.',
+     'clarity', 'The word "robust" is overused.');
+  silent('curly quotes block the swap too',
+     'The word \u201crobust\u201d is overused.', 'clarity', 'jargon');
+  // Entries whose plain word depends on the sentence point instead of guessing:
+  // "limited bandwidth" is not "limited time", "the Java ecosystem" is not
+  // "the Java set of tools", "a scalable system" is not "an able to grow system".
+  ['The team has limited bandwidth.', 'We mapped the whole ecosystem.',
+   'The service is scalable.', 'We told the stakeholders.',
+   'That was a win-win.'].forEach(function (t, i) {
+    var f = findingFor(t, 'clarity', 'jargon');
+    record('jargon points rather than guesses #' + (i + 1),
+           f !== null && f.replacement === null, 'a pointing jargon finding',
+           f === null ? 'no finding' : JSON.stringify(f.replacement));
+    record('jargon leaves what it cannot rewrite #' + (i + 1),
+           C.applyFindings(t, C.critique(t, 'clarity').findings).text === t, t,
+           C.applyFindings(t, C.critique(t, 'clarity').findings).text);
+  });
   revises('a gloss keeps its article when there is none to double',
      'Pick low-hanging fruit first.', 'clarity', 'Pick the easy wins first.');
 
@@ -212,6 +274,17 @@
      'concreteness', 'It ships. The queue drains.');
   revises('multi-word hedge', 'It could be argued that the parser is slow.', 'concreteness',
      'The parser is slow.');
+  // 'It is (basically) fine.' came back as 'It is () fine.'
+  silent('a bracketed hedge would leave "()"', 'It is (basically) fine.',
+     'concreteness', 'hedge');
+  revises('a bracketed hedge is left alone', 'It is (basically) fine.', 'concreteness',
+     'It is (basically) fine.');
+  silent('a quoted hedge would leave an empty quote',
+     'He said "basically" and moved on.', 'concreteness', 'hedge');
+  revises('a quoted hedge is left alone', 'He said "basically" and moved on.',
+     'concreteness', 'He said "basically" and moved on.');
+  silent('a curly-quoted hedge is left alone too',
+     'He said \u201cbasically\u201d and moved on.', 'concreteness', 'hedge');
 
   fires('several', 'The parser handles several files.', 'concreteness', 'vague-quantifier');
   fires('a number of', 'A number of files failed.', 'concreteness', 'vague-quantifier');
@@ -230,6 +303,13 @@
      'concreteness', 'adverb-prop');
   silent('adverb before a strong verb', 'The team quickly shipped the parser.',
      'concreteness', 'adverb-prop');
+  // "Emily is the release manager." came back as "Is the release manager."
+  silent('a capitalised -ly token is a name, not an adverb',
+     'Emily is the release manager.', 'concreteness', 'adverb-prop');
+  revises('a name ending in -ly survives', 'Emily is the release manager.',
+     'concreteness', 'Emily is the release manager.');
+  revises('Holly and Emily both survive', 'Holly is the author and Emily is the reviewer.',
+     'concreteness', 'Holly is the author and Emily is the reviewer.');
   revises('adverb before a weak verb is cut', 'The cache significantly improves throughput.',
      'concreteness', 'The cache improves throughput.');
 
@@ -243,6 +323,17 @@
   silent('"by the way" is not an agent', 'The fix was shipped by the way.',
      'concreteness', 'passive-with-agent');
   silent('no agent at all', 'The parser was rewritten last week.',
+     'concreteness', 'passive-with-agent');
+  // "The order was completed by Friday." is a deadline, not an agent.
+  silent('"by Friday" is a deadline', 'The order was completed by Friday.',
+     'concreteness', 'passive-with-agent');
+  silent('"by March" is a deadline', 'The migration was finished by March.',
+     'concreteness', 'passive-with-agent');
+  silent('"by email" is a channel', 'The fix was announced by email.',
+     'concreteness', 'passive-with-agent');
+  silent('"by midnight" is a deadline', 'The queue was drained by midnight.',
+     'concreteness', 'passive-with-agent');
+  fires('a person is still an agent', 'The results were presented by Sarah.',
      'concreteness', 'passive-with-agent');
   eq('passive-with-agent only points',
      findingFor('The parser was written by the compiler.', 'concreteness', 'passive-with-agent').replacement, null);
@@ -286,6 +377,22 @@
      'economy', 'very-intensifier');
   silent('"actually" before a verb', 'We actually shipped the parser.',
      'economy', 'very-intensifier');
+  // "not very useful" means "of limited use"; "not useful" means the opposite.
+  silent('a negation two tokens back blocks the cut', 'The chart is not very useful.',
+     'economy', 'very-intensifier');
+  silent('a contraction counts as a negation', "The chart isn't very useful.",
+     'economy', 'very-intensifier');
+  silent('"never" blocks the cut', 'The chart was never very useful.',
+     'economy', 'very-intensifier');
+  silent('"hardly" blocks the cut', 'The chart is hardly very useful.',
+     'economy', 'very-intensifier');
+  revises('a negated intensifier keeps the meaning it had',
+     'The chart is not very useful.', 'economy', 'The chart is not very useful.');
+  // Cutting the only word inside a bracket or a quote leaves a husk.
+  silent('a bracketed intensifier would leave "()"', 'It is (very) fast.',
+     'economy', 'very-intensifier');
+  revises('a bracketed intensifier is left alone', 'It is (very) fast.', 'economy',
+     'It is (very) fast.');
   revises('intensifiers are cut', 'It is very fast and really solid.', 'economy',
      'It is fast and solid.');
   revises('leading intensifier recapitalises', 'Extremely useful work landed today.', 'economy',
@@ -309,31 +416,49 @@
   FIXTURES.forEach(function (fx) {
     var name = fx[0], text = fx[1];
     var offsetsHold = true, sorted = true, disjoint = true, shaped = true, known = true;
-    var lastEnd = -1;
+    var displayOK = true, appliesClean = true;
     LENS_IDS.forEach(function (lens) {
       var fs;
       try { fs = C.critique(text, lens).findings; }
       catch (err) { shaped = false; return; }
-      lastEnd = -1;
+      var lastEnd = -1;
       var prevStart = -1;
       fs.forEach(function (f) {
         if (text.slice(f.start, f.end) !== f.quote) offsetsHold = false;
         if (f.start < prevStart) sorted = false;
-        if (f.start < lastEnd) disjoint = false;
+        // Only the findings that rewrite have to keep out of each other's way;
+        // a pointer applies nothing, so it may sit anywhere.
+        if (f.replacement !== null) {
+          if (f.start < lastEnd) disjoint = false;
+          lastEnd = f.end;
+        }
         prevStart = f.start;
-        lastEnd = f.end;
         if (typeof f.rule !== 'string' || typeof f.ruleName !== 'string' ||
             typeof f.start !== 'number' || typeof f.end !== 'number' ||
             typeof f.quote !== 'string' || typeof f.why !== 'string' ||
             !(f.replacement === null || typeof f.replacement === 'string')) shaped = false;
+        if (f.display !== undefined) {
+          if (!f.display || typeof f.display.quote !== 'string' ||
+              typeof f.display.replacement !== 'string' ||
+              f.quote.indexOf(f.display.quote) < 0) displayOK = false;
+        }
         if (ALL_RULES.indexOf(f.rule) < 0) known = false;
         if (f.why.split(/[.!?]\s/).length !== 1) shaped = false;
         if (/\bwe\b/i.test(f.why)) shaped = false;
       });
+      // Every applicable finding survives the sweep, so applying them all is
+      // exactly as many edits as there are applicable findings.
+      var applicable = fs.filter(function (f) { return f.replacement !== null; });
+      if (C.applyFindings(text, fs).applied !== applicable.length) appliesClean = false;
     });
     record('offsets hold: ' + name, offsetsHold, 'slice === quote', String(offsetsHold));
     record('sorted by start: ' + name, sorted, 'ascending', String(sorted));
-    record('non-overlapping: ' + name, disjoint, 'disjoint', String(disjoint));
+    record('applicable findings do not overlap: ' + name, disjoint, 'disjoint',
+           String(disjoint));
+    record('display is a substring of quote: ' + name, displayOK, 'display.quote in quote',
+           String(displayOK));
+    record('every applicable finding applies: ' + name, appliesClean, 'all applied',
+           String(appliesClean));
     record('finding shape: ' + name, shaped, 'well formed', String(shaped));
     record('rule ids known: ' + name, known, 'all in ALL_RULES', String(known));
   });
@@ -348,7 +473,10 @@
      C.applyFindings(applyText, pointOnly), { text: applyText, applied: 0 });
   eq('empty findings list is a no-op', C.applyFindings('unchanged text', []),
      { text: 'unchanged text', applied: 0 });
-  var mutText = 'It is important to note that we leverage each and every gain.';
+  // Built from parts and copied character by character, so the comparison below
+  // is against an independent string, not against the literal it was assigned.
+  var mutText = ['It is important to note that ', 'we leverage each and every gain.'].join('');
+  var mutCopy = mutText.split('').join('');
   var mutFindings = C.critique(mutText, 'economy').findings;
   var beforeJSON = JSON.stringify(mutFindings);
   var appliedOut = C.applyFindings(mutText, mutFindings);
@@ -357,7 +485,11 @@
   ok('applied count matches the replaceable findings',
      appliedOut.applied === mutFindings.filter(function (f) { return f.replacement !== null; }).length);
   ok('applyFindings leaves its input string alone',
-     mutText === 'It is important to note that we leverage each and every gain.');
+     mutText === mutCopy && mutText.length === mutCopy.length);
+  ok('the revision is a different string from the input', appliedOut.text !== mutText);
+  ok('the findings still quote the untouched input', mutFindings.every(function (f) {
+    return mutText.slice(f.start, f.end) === f.quote;
+  }));
   var shuffled = mutFindings.slice().reverse();
   eq('order of the input list does not matter',
      C.applyFindings(mutText, shuffled).text, appliedOut.text);
@@ -467,8 +599,14 @@
   })());
   eq('finalText is the last pass output', messy.finalText,
      messy.passes[messy.passes.length - 1].after);
+  // Derived by hand, lens by lens, from the input:
+  //   clarity     "robust" -> "solid", "leverage" -> "use"; "implementation" is
+  //               a nominalisation, which points and rewrites nothing
+  //   concreteness"basically" is a hedge and goes
+  //   economy     "in order to" -> "to", "each and every" -> "every",
+  //               "very" before "solid" is an empty intensifier and goes
   eq('the loop actually shortens this draft', messy.finalText,
-     'The build was solid to use every gain.');
+     'The implementation was solid to use every gain.');
   ok('word count falls across the run',
      messy.passes[2].metricsAfter.words < messy.passes[0].metricsBefore.words);
   eq('every pass carries the required keys',
