@@ -904,24 +904,76 @@
          fragHits.length ? fragHits[0] : 'none');
 
   /* ==================================================================== */
-  g('C1 atTextStart');
+  g('C1 chunk heads');
+  // Whether the first word of a fragment starts a sentence is not a fact about
+  // the fragment: it is a fact about what stands in front of it. Chunks are cut
+  // at sentence ends, so a chunk head is normally a sentence start and its
+  // capital belongs to it; a fragment cut mid-sentence must not gain one. A
+  // boolean cannot tell those apart, so critique() takes opts.before — the text
+  // immediately before this fragment, '' at the start of the text, otherwise the
+  // tail of the previous chunk (40 characters is plenty).
   var CHUNK = 'Basically the queue drains.';
-  eq('a chunk that does not start a text keeps its first word lowercase',
-     C.applyFindings(CHUNK, C.critique(CHUNK, 'concreteness', { atTextStart: false }).findings).text,
-     'the queue drains.');
-  eq('the same text at a text start recapitalises',
-     C.applyFindings(CHUNK, C.critique(CHUNK, 'concreteness').findings).text,
+  eq('a chunk head after a sentence terminator keeps its capital',
+     C.applyFindings(CHUNK, C.critique(CHUNK, 'concreteness',
+       { before: 'The pool refills. ' }).findings).text,
      'The queue drains.');
-  eq('the default is atTextStart true',
+  eq('a chunk head after a mid-sentence fragment gains none',
+     C.applyFindings(CHUNK, C.critique(CHUNK, 'concreteness',
+       { before: 'that trouble with ' }).findings).text,
+     'the queue drains.');
+  eq('nothing before it at all is the start of the text',
+     C.applyFindings(CHUNK, C.critique(CHUNK, 'concreteness', { before: '' }).findings).text,
+     'The queue drains.');
+  eq('and that is the default',
      JSON.stringify(C.critique(CHUNK, 'concreteness')),
-     JSON.stringify(C.critique(CHUNK, 'concreteness', { atTextStart: true })));
+     JSON.stringify(C.critique(CHUNK, 'concreteness', { before: '' })));
+  // The two repro strings from the review, both directions.
+  var REPRO = 'Basically the cache is fast.';
+  eq('repro: the head follows "... ecosystem. "',
+     C.applyFindings(REPRO, C.critique(REPRO, 'concreteness',
+       { before: 'and it is the heart of the ecosystem. ' }).findings).text,
+     'The cache is fast.');
+  eq('repro: the head follows "that trouble with "',
+     C.applyFindings(REPRO, C.critique(REPRO, 'concreteness',
+       { before: 'that trouble with ' }).findings).text,
+     'the cache is fast.');
+  // What counts as "a sentence ended here", written out by hand.
+  var BEFORE_CASES = [
+    ['', true], ['   ', true], ['It shipped. ', true], ['It shipped.', true],
+    ['It shipped!  ', true], ['Did it ship? ', true], ['It shipped… ', true],
+    ['He said “Go.” ', true], ['(It shipped.) ', true], ['It shipped."\n', true],
+    ['that trouble with ', false], ['a comma, ', false], ['the ', false],
+    ['it shipped and ', false], ['fig. 3 (a) ', false], ['1.5 ', false]
+  ];
+  BEFORE_CASES.forEach(function (c) {
+    var want = c[1] ? 'The queue drains.' : 'the queue drains.';
+    record('before ' + JSON.stringify(c[0]) + ' -> ' + (c[1] ? 'sentence start' : 'mid-sentence'),
+           C.applyFindings(CHUNK, C.critique(CHUNK, 'concreteness',
+             { before: c[0] }).findings).text === want,
+           want, C.applyFindings(CHUNK, C.critique(CHUNK, 'concreteness',
+             { before: c[0] }).findings).text);
+  });
+  // atTextStart is kept as a deprecated alias so no caller breaks silently.
+  LENS_IDS.forEach(function (lens) {
+    record('atTextStart:false is the alias for a mid-sentence before (' + lens + ')',
+           JSON.stringify(C.critique(CHUNK, lens, { atTextStart: false })) ===
+           JSON.stringify(C.critique(CHUNK, lens, { before: 'x ' })), 'identical', 'differs');
+    record('atTextStart:true is the alias for before "" (' + lens + ')',
+           JSON.stringify(C.critique(CHUNK, lens, { atTextStart: true })) ===
+           JSON.stringify(C.critique(CHUNK, lens, { before: '' })), 'identical', 'differs');
+  });
+  ok('before wins when both are passed',
+     C.applyFindings(CHUNK, C.critique(CHUNK, 'concreteness',
+       { before: 'It shipped. ', atTextStart: false }).findings).text === 'The queue drains.');
+
   var CHUNKS = ['Basically the queue drains.', 'It is important to note that the disk was full.',
     'Extremely useful work landed today.', 'Robust systems fail quietly.',
     'It seems that the parser is slow.', 'Very fast builds win.'];
   var capAtZero = [];
   CHUNKS.forEach(function (t) {
     LENS_IDS.forEach(function (lens) {
-      C.critique(t, lens, { atTextStart: false }).findings.forEach(function (f) {
+      C.critique(t, lens, { before: 'the middle of a sentence and then ' })
+        .findings.forEach(function (f) {
         if (f.start !== 0 || f.replacement === null) return;
         // Nothing at offset 0 may introduce a capital that was not already there.
         var was = f.quote.replace(/^\s+/, '').charAt(0);
@@ -931,11 +983,131 @@
       });
     });
   });
-  record('no capitalisation-changing replacement at offset 0', capAtZero.length === 0,
-         'none', capAtZero.length ? capAtZero[0] : 'none');
-  eq('a capitalised jargon word in a chunk is treated as a name',
-     C.critique('Robust systems fail quietly.', 'clarity', { atTextStart: false })
+  record('no capitalisation-changing replacement at offset 0 mid-sentence',
+         capAtZero.length === 0, 'none', capAtZero.length ? capAtZero[0] : 'none');
+  var droppedCap = [];
+  CHUNKS.forEach(function (t) {
+    LENS_IDS.forEach(function (lens) {
+      var after = C.applyFindings(t, C.critique(t, lens, { before: 'It shipped. ' }).findings).text;
+      var c = after.charAt(0);
+      if (c !== '' && c.toLowerCase() === c && c.toUpperCase() !== c) droppedCap.push(lens + ': ' + after);
+    });
+  });
+  record('and no capital is taken away at a chunk head that follows a sentence end',
+         droppedCap.length === 0, 'none', droppedCap.length ? droppedCap[0] : 'none');
+  eq('a capitalised jargon word mid-sentence is treated as a name',
+     C.critique('Robust systems fail quietly.', 'clarity', { before: 'we build ' })
        .findings.map(function (f) { return f.rule; }), []);
+
+  /* ==================================================================== */
+  g('C1b chunked equals whole');
+  // The property the whole flag exists for: critiquing a long draft in pieces,
+  // each piece told what came before it, must produce exactly the text one
+  // critique of the whole draft produces — byte for byte. Chunks are cut at
+  // sentence ends, which is where the page cuts them and the only place where
+  // this can hold: a finding never spans a chunk boundary, so a cut inside a
+  // sentence can drop a phrase that straddles it.
+  function splitAtSentenceEnds(text, target) {
+    var ends = [], re = /[.!?…]["'\)\]”’]*\s+/g, m;
+    while ((m = re.exec(text)) !== null) ends.push(m.index + m[0].length);
+    var out = [], i = 0, k = 0;
+    while (i < text.length) {
+      while (k < ends.length && ends[k] <= i + target) k++;
+      var cut = (k > 0 && ends[k - 1] > i) ? ends[k - 1] : text.length;
+      out.push({ start: i, text: text.slice(i, cut) });
+      i = cut;
+    }
+    if (!out.length) out.push({ start: 0, text: text });
+    return out;
+  }
+  function chunkedText(text, lens, target) {
+    var chunks = splitAtSentenceEnds(text, target), parts = [], i, ch;
+    for (i = 0; i < chunks.length; i++) {
+      ch = chunks[i];
+      // 40 characters of the previous chunk is all a chunk head needs.
+      var before = text.slice(Math.max(0, ch.start - 40), ch.start);
+      parts.push(C.applyFindings(ch.text, C.critique(ch.text, lens, { before: before }).findings).text);
+    }
+    return { text: parts.join(''), chunks: chunks.length };
+  }
+  var EQ_SENTS = [
+    'Basically the cache is fast.',
+    'We utilize a robust ecosystem to leverage synergy.',
+    'The report was written by the team in order to clarify the very real risks.',
+    'It is absolutely essential that we plan ahead and think about going forward.',
+    'There were a number of issues that were identified by the reviewers.',
+    'The implementation is somewhat late, and the results are quite good.',
+    'A truly excellent result was achieved by the group after the meeting.',
+    'Trouble with the queue drains the pool quickly.',
+    'The system, basically, works well enough for now.',
+    'We shipped an actionable list of items to the client last week.',
+    'The word “robust” is overused (and the team knows it).',
+    'She booked an 18-month contract with a European vendor!',
+    'Did the parser handle an 8-bit palette?',
+    'The team utilized a very unique approach in order to leverage the API.',
+    'Kubernetes is basically a robust orchestration layer, going forward.',
+    'Our engineers leveraged synergy across the ecosystem, quite literally.',
+    'A somewhat vague number of tickets were closed by the on-call engineer.',
+    'The build early is the fastest, and the queue drains quietly.',
+    'We need to think outside the box and touch base with the stakeholders.',
+    'The results were presented by Sarah in order to move the needle.'
+  ];
+  function buildText(n, seed) {
+    var out = '', i = 0;
+    while (out.length < n) { out += EQ_SENTS[(i * seed + seed) % EQ_SENTS.length] + ' '; i++; }
+    return out.slice(0, n).replace(/\s+$/, '');
+  }
+  var RUNON = '';
+  while (RUNON.length < 7000) {
+    RUNON += 'the queue drains slowly and the cache warms up while the workers basically idle ' +
+      'and we utilize a robust ecosystem going forward with a truly excellent result that was ' +
+      'achieved by the team in order to leverage synergy and it is somewhat late ';
+  }
+  RUNON = RUNON.slice(0, 7000).replace(/\s+$/, '');
+  var EQ_TEXTS = [['mixed prose', buildText(7000, 1)], ['different order', buildText(7000, 3)],
+                  ['longer still', buildText(7400, 7)], ['no terminators at all', RUNON]];
+  ok('every equivalence text is at least 7000 characters or the run-on',
+     EQ_TEXTS.every(function (t) { return t[1].length >= 6900; }));
+  ok('the run-on text has no sentence terminator in it', /[.!?…]/.test(RUNON) === false);
+  EQ_TEXTS.forEach(function (t) {
+    LENS_IDS.forEach(function (lens) {
+      [1200, 2400].forEach(function (target) {
+        var whole = C.applyFindings(t[1], C.critique(t[1], lens).findings).text;
+        var piece = chunkedText(t[1], lens, target);
+        var same = piece.text === whole;
+        var at = 0;
+        if (!same) { while (piece.text.charAt(at) === whole.charAt(at)) at++; }
+        record('chunked equals whole: ' + t[0] + ', ' + lens + ', target ' + target,
+               same, 'byte-identical',
+               same ? 'byte-identical'
+                    : 'diverges at ' + at + ': ' + JSON.stringify(whole.slice(at - 40, at + 20)) +
+                      ' vs ' + JSON.stringify(piece.text.slice(at - 40, at + 20)));
+      });
+    });
+  });
+  ok('the prose texts really were cut into several chunks',
+     splitAtSentenceEnds(EQ_TEXTS[0][1], 1200).length >= 5 &&
+     splitAtSentenceEnds(EQ_TEXTS[2][1], 2400).length >= 3);
+  ok('a text with no sentence end is one chunk, because there is nowhere to cut it',
+     splitAtSentenceEnds(RUNON, 1200).length === 1);
+  // A run-on has to be cut somewhere if it is ever chunked, and then the cut
+  // lands mid-sentence: byte equivalence cannot hold there (a phrase straddling
+  // the cut is not found), but the head rule still must not invent a capital.
+  var runonCaps = [];
+  for (var rc = 1200; rc < RUNON.length; rc += 1200) {
+    var rStart = rc, rEnd = Math.min(RUNON.length, rc + 1200);
+    var rFrag = RUNON.slice(rStart, rEnd);
+    LENS_IDS.forEach(function (lens) {
+      var after = C.applyFindings(rFrag, C.critique(rFrag, lens,
+        { before: RUNON.slice(Math.max(0, rStart - 40), rStart) }).findings).text;
+      var c0 = after.charAt(0);
+      if (c0 !== '' && c0.toUpperCase() === c0 && c0.toLowerCase() !== c0) {
+        runonCaps.push(lens + ' at ' + rStart + ': ' + JSON.stringify(after.slice(0, 30)));
+      }
+    });
+  }
+  record('a mid-sentence cut in the run-on never gains a capital', runonCaps.length === 0,
+         'none', runonCaps.length ? runonCaps[0] : 'none');
 
   /* ==================================================================== */
   g('C2 display');

@@ -8,7 +8,7 @@
  * findings that quote an exact span and (usually) carry a replacement for it.
  * A rule that cannot rewrite the span safely points at it instead
  * (replacement === null) rather than guessing; pointers never rewrite anything.
- * critique(text, lens, {atTextStart}) merges a lens's rules into one sorted
+ * critique(text, lens, {before}) merges a lens's rules into one sorted
  * list, non-overlapping among the findings that carry a replacement — pointers
  * are exempt and all survive. A finding may carry display:{quote, replacement}
  * when its mechanical span had to widen past the human-meaningful one.
@@ -121,18 +121,35 @@
     return sents;
   }
 
-  // atTextStart === false means this text is a chunk cut out of a longer one,
-  // so offset 0 is not a sentence start and nothing may recapitalise there.
-  function startsSentence(text, i, atTextStart) {
-    var k = i;
-    while (k > 0 && isSpace(text.charAt(k - 1))) k--;
-    if (k === 0) return atTextStart !== false;
-    return TERMINATORS.indexOf(text.charAt(k - 1)) >= 0;
-  }
-
   // Bracket and quote pairs, opener i matching closer i.
   var PAIR_OPEN  = '([{"\'\u201c\u2018';
   var PAIR_CLOSE = ')]}"\'\u201d\u2019';
+
+  // Whether offset 0 of a fragment opens a sentence is not a property of the
+  // fragment: it is a property of what came before it. A chunk cut out of a
+  // longer draft is usually cut *at* a sentence end, so its first word is a
+  // sentence start and must keep its capital; a chunk cut mid-sentence must not
+  // gain one. opts.before carries the text that precedes the fragment (the tail
+  // of the previous chunk is enough) and answers the question directly: no text
+  // before it at all, or text that ends with a terminator — closing quotes and
+  // brackets ride along — means offset 0 opens a sentence.
+  function headStartsSentence(before) {
+    var b = String(before == null ? '' : before);
+    var k = b.length;
+    while (k > 0 && isSpace(b.charAt(k - 1))) k--;
+    while (k > 0 && PAIR_CLOSE.indexOf(b.charAt(k - 1)) >= 0) k--;
+    if (k === 0) return true;              // nothing before it: this is the text start
+    return TERMINATORS.indexOf(b.charAt(k - 1)) >= 0;
+  }
+
+  // headStarts is headStartsSentence(opts.before), computed once per critique.
+  function startsSentence(text, i, headStarts) {
+    var k = i;
+    while (k > 0 && isSpace(text.charAt(k - 1))) k--;
+    if (k === 0) return headStarts !== false;
+    return TERMINATORS.indexOf(text.charAt(k - 1)) >= 0;
+  }
+
   var QUOTE_OPEN = '"\'\u201c\u2018';
   var QUOTE_CLOSE = '"\'\u201d\u2019';
 
@@ -213,7 +230,7 @@
   // commas have to survive, and a deletion at the head of a sentence has to
   // hand the capital to the next word. Returns the widened span plus the string
   // that replaces it (usually '', sometimes the recapitalised next letter).
-  function deletionEdit(text, s, e, atTextStart) {
+  function deletionEdit(text, s, e, headStarts) {
     var n = text.length, start = s, end = e, ls, re, prev, next;
 
     ls = start; while (ls > 0 && isSpace(text.charAt(ls - 1))) ls--;
@@ -242,7 +259,7 @@
     }
 
     var replacement = '', display = null;
-    if (startsSentence(text, start, atTextStart)) {
+    if (startsSentence(text, start, headStarts)) {
       var k = end;
       while (k < n && isSpace(text.charAt(k))) k++;
       if (k < n) {
@@ -767,7 +784,7 @@
         // "Robust Systems Inc." is a name. A capital mid-sentence is never this
         // rule's business, and a capital at a sentence start followed by another
         // capital is a name that happens to open the sentence.
-        if (!startsSentence(text, a, ctx.atTextStart)) return;
+        if (!startsSentence(text, a, ctx.headStarts)) return;
         var after = ctx.tokens[j + 1];
         if (after && isGapBlank(text, b, after.s) && isCapitalised(after.w)) return;
       }
@@ -806,7 +823,7 @@
       if (hedgeBlocked(ctx.tokens, i, j, key)) return;
       var a = ctx.tokens[i].s, b = ctx.tokens[j].e, quote = text.slice(a, b);
       if (enclosedAlone(text, a, b)) return; // '(basically)' would become '()'
-      var edit = deletionEdit(text, a, b, ctx.atTextStart);
+      var edit = deletionEdit(text, a, b, ctx.headStarts);
       out.push(finding(text, 'hedge', 'Hedge', edit.start, edit.end,
         q(quote) + ' softens the claim without changing what it says.',
         edit.replacement, edit.display));
@@ -848,7 +865,7 @@
       if (a.w !== a.lw) continue;
       if (!isGapBlank(text, a.e, b.s)) continue;
       if (enclosedAlone(text, a.s, a.e)) continue;
-      var edit = deletionEdit(text, a.s, a.e, ctx.atTextStart);
+      var edit = deletionEdit(text, a.s, a.e, ctx.headStarts);
       out.push(finding(text, 'adverb-prop', 'Adverb propping a weak verb', edit.start, edit.end,
         q(a.w) + ' props up the weak verb ' + q(b.w) + ' instead of a verb that carries the claim.',
         edit.replacement, edit.display));
@@ -906,7 +923,7 @@
       var a = ctx.tokens[i].s, b = ctx.tokens[j].e, quote = text.slice(a, b);
       if (value === DELETE) {
         if (enclosedAlone(text, a, b)) return;
-        var edit = deletionEdit(text, a, b, ctx.atTextStart);
+        var edit = deletionEdit(text, a, b, ctx.headStarts);
         out.push(finding(text, 'filler-phrase', 'Filler phrase', edit.start, edit.end,
           q(quote) + ' spends ' + words(key) + ' words and adds nothing the sentence needs.',
           edit.replacement, edit.display));
@@ -966,7 +983,7 @@
       if (negatedBefore(ctx.tokens, i)) return;
       var a = ctx.tokens[i].s, b = ctx.tokens[j].e, quote = text.slice(a, b);
       if (enclosedAlone(text, a, b)) return;
-      var edit = deletionEdit(text, a, b, ctx.atTextStart);
+      var edit = deletionEdit(text, a, b, ctx.headStarts);
       out.push(finding(text, 'very-intensifier', 'Empty intensifier', edit.start, edit.end,
         q(quote) + ' before ' + q(nextTok.w) + ' adds emphasis, not information.',
         edit.replacement, edit.display));
@@ -1039,18 +1056,29 @@
 
   /* --------------------------------------------------------------- critique */
 
-  // opts.atTextStart defaults to true. Pass false when text is a chunk cut out
-  // of a longer draft: offset 0 is then mid-sentence, and no rule may treat it
-  // as a sentence start or recapitalise the word sitting there.
+  // opts.before (default '') is the text immediately in front of this
+  // fragment. Pass the tail of the previous chunk when critiquing a long draft
+  // in pieces — 40 characters is plenty — and the rules read offset 0 the way a
+  // reader does: a fragment cut at a sentence end keeps its capital, a fragment
+  // cut mid-sentence never gains one.
+  //
+  // opts.atTextStart is the deprecated alias it replaces: true (or absent) maps
+  // to before '', false to before 'x ' — a fragment that follows a word.
+  function beforeOf(opts) {
+    if (opts && typeof opts.before === 'string') return opts.before;
+    if (opts && opts.atTextStart !== undefined) return opts.atTextStart === false ? 'x ' : '';
+    return '';
+  }
+
   function critique(text, lensId, opts) {
     text = toText(text);
     var rules = LENS_RULES.get(lensId);
     if (!rules) throw new Error('critic-loop: unknown lens "' + lensId + '"');
 
-    var atTextStart = !(opts && opts.atTextStart === false);
+    var before = beforeOf(opts);
     var tokens = tokenize(text);
     var ctx = { tokens: tokens, sentences: sentencesWithTokens(text, tokens),
-                atTextStart: atTextStart };
+                headStarts: headStartsSentence(before) };
 
     var raw = [], r, i, produced, k;
     for (r = 0; r < rules.length; r++) {
@@ -1250,7 +1278,7 @@
   // opts.through (default: every lens) is the exclusive end of the range the
   // caller will actually cover. A run capped at one pass looks ahead at nothing,
   // because it has no second lens in its future that could still be dirty.
-  // opts.atTextStart is passed through to critique().
+  // opts.before is passed through to critique().
   function tailClean(text, nextLensIndex, opts) {
     text = toText(text);
     var i = Math.floor(Number(nextLensIndex));
@@ -1304,7 +1332,7 @@
     var maxPasses = (opts && typeof opts.maxPasses === 'number') ? opts.maxPasses : 3;
     if (!(maxPasses > 0)) maxPasses = 0;
     maxPasses = Math.min(Math.floor(maxPasses), LENSES.length);
-    var copts = { atTextStart: !(opts && opts.atTextStart === false), through: maxPasses };
+    var copts = { before: beforeOf(opts), through: maxPasses };
 
     var current = text, converged = false, stoppedAt = null, cappedClean = false;
     var passCount = 0, i, j;
@@ -1361,7 +1389,7 @@
     // it, and a run capped below three lenses must not call a draft clean on
     // the strength of the one lens it happened to run.
     if (passCount > 0 && passCount >= maxPasses) {
-      cappedClean = tailClean(current, 0, { atTextStart: copts.atTextStart }).clean;
+      cappedClean = tailClean(current, 0, { before: copts.before }).clean;
     }
     return { converged: converged, stoppedAt: stoppedAt, cappedClean: cappedClean,
              finalText: current, passCount: passCount };
