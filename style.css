@@ -138,6 +138,9 @@ textarea, input[type="password"], input[type="text"] {
   padding: 0.6rem;
 }
 textarea { resize: vertical; min-height: 7.5rem; }
+/* Read-only while a run is in flight: the draft stays readable, selectable and copyable,
+   and the character counter beside it cannot drift away from the text the run captured. */
+textarea.is-locked { background: var(--disabled-bg); cursor: default; }
 ::placeholder { color: var(--muted); opacity: 1; }
 
 .counter { font-size: 0.8rem; color: var(--muted); margin: 0.35rem 0 0.9rem; }

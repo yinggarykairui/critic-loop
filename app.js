@@ -884,10 +884,33 @@
     };
   }
 
+  /* Chunking must not change what a pass reports. Nearly every rule fires once per
+     occurrence, so its findings are already per-draft: three chunks holding two jargon
+     words each report six, exactly as the whole draft does, and deduping them would
+     lose four real complaints. The counting rules are the exception — they fire at most
+     once per word per critique however often the word comes back (critic.js: "a counting
+     rule fires once per chunk when a long draft is critiqued in pieces"), so chunking
+     multiplies them by the number of chunks the word appears in. Those, and only those,
+     are deduped by (rule, quote) — the identity the engine guarantees — first occurrence
+     kept. Applicable findings are never deduped: two identical fixable spans are two
+     real edits. */
+  var COUNTING_RULES = (function () {
+    var m = Object.create(null);
+    m.repetition = true;   /* "Repeated word" — one finding per word, whatever the count */
+    return m;
+  })();
+
+  function countingKey(f) {
+    if (!f || (f.replacement !== null && f.replacement !== undefined)) return null;  /* pointer-only */
+    if (!COUNTING_RULES[String(f.rule)]) return null;
+    return String(f.rule) + '\u0000' + String(f.quote == null ? '' : f.quote);
+  }
+
   /* One chunked offline critique: findings for the whole text, applied chunk by chunk. */
   function chunkedPass(text, lensId, alive) {
     var chunks = splitChunks(text, CHUNK_TARGET);
     var kept = [], total = 0, applied = 0, parts = [];
+    var seen = Object.create(null);
     var i = 0, last = now();
 
     function slice() {
@@ -899,9 +922,14 @@
         var ap = CL.applyFindings(ch.text, fs);
         parts.push(ap.text);
         applied += ap.applied;
-        total += fs.length;
-        for (var k = 0; k < fs.length && kept.length < FINDINGS_KEEP_CAP; k++) {
-          kept.push(shiftFinding(fs[k], ch.start));
+        for (var k = 0; k < fs.length; k++) {
+          var key = countingKey(fs[k]);
+          if (key !== null) {
+            if (seen[key]) continue;
+            seen[key] = true;
+          }
+          total++;
+          if (kept.length < FINDINGS_KEEP_CAP) kept.push(shiftFinding(fs[k], ch.start));
         }
         if (now() - last > SLICE_BUDGET_MS) { last = now(); return yieldToPaint().then(slice); }
       }
@@ -1009,6 +1037,10 @@
     /* Stop is not shown at all until there is a run to stop. */
     els.stop.hidden = !busy;
     els.stop.disabled = !busy;
+    /* Read-only, not disabled: the text stays readable, selectable and copyable, but it
+       cannot drift away from the draft 0 the transcript below was built from. */
+    els.input.readOnly = busy;
+    els.input.classList.toggle('is-locked', busy);
     els.skip.hidden = !busy || reduceMotion;  /* nothing to skip when motion is already off */
     for (s = 0; s < sampleButtons.length; s++) sampleButtons[s].disabled = busy;
     for (s = 0; s < engineRadios.length; s++) engineRadios[s].disabled = busy;
@@ -1124,8 +1156,10 @@
           count(n) + ' chunks of about ' + count(CHUNK_TARGET) + ' characters, cut at a sentence ' +
           'end where there is one and at whitespace otherwise, never mid-word. ' +
           'The page hands control back to the browser between chunks, so it stays usable. Metrics are ' +
-          'measured on the whole draft, not summed over chunks. No text is dropped, but a finding ' +
-          'never spans a chunk boundary.');
+          'measured on the whole draft, not summed over chunks. The rules that count how often a ' +
+          'word comes back report it once per draft, not once per chunk, so a chunked draft counts ' +
+          'them exactly as an unchunked one does. No text is dropped, but a finding never spans a ' +
+          'chunk boundary.');
       }
     });
 
