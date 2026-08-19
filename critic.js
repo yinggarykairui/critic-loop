@@ -6,9 +6,15 @@
  *
  * Shape: three lenses, each a list of rules. A rule scans text and returns
  * findings that quote an exact span and (usually) carry a replacement for it.
- * critique() merges a lens's rules into one sorted, non-overlapping list;
+ * A rule that cannot rewrite the span safely points at it instead
+ * (replacement === null) rather than guessing; pointers never rewrite anything.
+ * critique(text, lens, {atTextStart}) merges a lens's rules into one sorted
+ * list, non-overlapping among the findings that carry a replacement — pointers
+ * are exempt and all survive. A finding may carry display:{quote, replacement}
+ * when its mechanical span had to widen past the human-meaningful one.
  * applyFindings() rewrites the text right-to-left so offsets stay valid;
- * run() walks lens 1..3 and stops early on a lens that finds nothing.
+ * steps() is the loop as a generator, and run() drains it. The loop stops early
+ * only when the text is clean under every lens it has not yet run.
  *
  * Exports exactly one global: window.CriticLoop.
  */
@@ -115,17 +121,50 @@
     return sents;
   }
 
-  function startsSentence(text, i) {
+  // atTextStart === false means this text is a chunk cut out of a longer one,
+  // so offset 0 is not a sentence start and nothing may recapitalise there.
+  function startsSentence(text, i, atTextStart) {
     var k = i;
     while (k > 0 && isSpace(text.charAt(k - 1))) k--;
-    if (k === 0) return true;
+    if (k === 0) return atTextStart !== false;
     return TERMINATORS.indexOf(text.charAt(k - 1)) >= 0;
+  }
+
+  // Bracket and quote pairs, opener i matching closer i.
+  var PAIR_OPEN  = '([{"\'\u201c\u2018';
+  var PAIR_CLOSE = ')]}"\'\u201d\u2019';
+  var QUOTE_OPEN = '"\'\u201c\u2018';
+  var QUOTE_CLOSE = '"\'\u201d\u2019';
+
+  // True when the span is the entire content of a bracket or quote pair.
+  // Cutting it would leave "It is () fine." or 'He said "" and moved on.'
+  function enclosedAlone(text, a, b) {
+    if (a <= 0 || b >= text.length) return false;
+    var i = PAIR_OPEN.indexOf(text.charAt(a - 1));
+    if (i < 0) return false;
+    return text.charAt(b) === PAIR_CLOSE.charAt(i);
+  }
+
+  // True when the span sits immediately inside quotes: quoted material is being
+  // mentioned, not used, so swapping the word inside changes what was said.
+  function quotedAlone(text, a, b) {
+    if (a <= 0 || b >= text.length) return false;
+    return QUOTE_OPEN.indexOf(text.charAt(a - 1)) >= 0 &&
+           QUOTE_CLOSE.indexOf(text.charAt(b)) >= 0;
+  }
+
+  function isCapitalised(w) {
+    var c = w.charAt(0);
+    return c !== '' && c !== c.toLowerCase() && c === c.toUpperCase();
   }
 
   /* ------------------------------------------------------------- edit shape */
 
-  function finding(text, rule, ruleName, start, end, why, replacement) {
-    return {
+  // display is optional: when the mechanical span had to swallow a neighbouring
+  // space or letter, display carries the span a human would recognise. It is
+  // never applied — applyFindings only ever uses quote/start/end/replacement.
+  function finding(text, rule, ruleName, start, end, why, replacement, display) {
+    var f = {
       rule: rule,
       ruleName: ruleName,
       start: start,
@@ -134,12 +173,21 @@
       why: why,
       replacement: replacement === undefined ? null : replacement
     };
+    if (display) f.display = display;
+    return f;
   }
 
   // Carries the capitalisation of the quote onto its replacement, so
   // "Leverage the cache" becomes "Use the cache" and not "use the cache".
+  var TWO_LETTERS_RE = /\p{L}[^\p{L}]*\p{L}/u;
   function matchCapital(quote, repl) {
     if (!repl) return repl;
+    // Shouting in, shouting out: "IN ORDER TO LEVERAGE IT" must not come back
+    // as "To LEVERAGE IT". Needs two letters, so the article "A" is not caught.
+    if (quote === quote.toUpperCase() && quote !== quote.toLowerCase() &&
+        TWO_LETTERS_RE.test(quote)) {
+      return repl.toUpperCase();
+    }
     var c = quote.charAt(0);
     if (c && c !== c.toLowerCase() && c === c.toUpperCase()) {
       return repl.charAt(0).toUpperCase() + repl.slice(1);
@@ -151,7 +199,7 @@
   // commas have to survive, and a deletion at the head of a sentence has to
   // hand the capital to the next word. Returns the widened span plus the string
   // that replaces it (usually '', sometimes the recapitalised next letter).
-  function deletionEdit(text, s, e) {
+  function deletionEdit(text, s, e, atTextStart) {
     var n = text.length, start = s, end = e, ls, re, prev, next;
 
     ls = start; while (ls > 0 && isSpace(text.charAt(ls - 1))) ls--;
@@ -179,16 +227,105 @@
       while (end < n && isSpace(text.charAt(end))) end++;
     }
 
-    var replacement = '';
-    if (startsSentence(text, start)) {
+    var replacement = '', display = null;
+    if (startsSentence(text, start, atTextStart)) {
       var k = end;
       while (k < n && isSpace(text.charAt(k))) k++;
       if (k < n) {
         var c = text.charAt(k), up = c.toUpperCase();
-        if (up !== c) { replacement = text.slice(end, k) + up; end = k + 1; }
+        if (up !== c) {
+          // The span now ends one letter into the next word, which reads as
+          // nonsense in a list of edits: show the phrase and the space instead.
+          display = { quote: text.slice(s, k), replacement: '' };
+          replacement = text.slice(end, k) + up;
+          end = k + 1;
+        }
       }
     }
-    return { start: start, end: end, replacement: replacement };
+    if (!display && (start !== s || end !== e)) {
+      display = { quote: text.slice(s, e), replacement: '' };
+    }
+    return { start: start, end: end, replacement: replacement, display: display };
+  }
+
+  /* --------------------------------------------------------- article repair */
+
+  // Any edit that changes the word after "a"/"an" has to re-pick the article:
+  // cutting the intensifier out of "a truly excellent result" leaves
+  // "a excellent result", and swapping the jargon in "an actionable list"
+  // leaves "an usable list". Orthography is not pronunciation, so the letter
+  // rule carries the common words it gets wrong as two lists.
+  var TAKES_A = new Set(['use', 'used', 'useful', 'useless', 'user', 'users', 'usable',
+    'usage', 'usual', 'unique', 'unified', 'uniform', 'union', 'unit', 'units', 'united',
+    'universal', 'universe', 'university', 'utility', 'utilities', 'ubiquitous',
+    'one', 'once', 'euro', 'european']);
+  var TAKES_AN = new Set(['hour', 'hours', 'hourly', 'honest', 'honestly', 'honour',
+    'honours', 'honor', 'honors', 'honourable', 'honorable', 'heir', 'heirs', 'heirloom']);
+
+  function wantsAn(word) {
+    var lw = word.toLowerCase();
+    if (TAKES_AN.has(lw)) return true;
+    if (TAKES_A.has(lw)) return false;
+    if (lw.slice(0, 2) === 'eu') return false;   // euphoric, European: /ju\u02d0/
+    return 'aeiou'.indexOf(lw.charAt(0)) >= 0;
+  }
+
+  // The article immediately before offset i, or null.
+  function articleBefore(text, i) {
+    var e = i;
+    while (e > 0 && isSpace(text.charAt(e - 1))) e--;
+    // Either whitespace sits between the article and the span, or the span
+    // itself opens with the whitespace (a deletion swallows the space to its
+    // left). Anything else means the span is glued to the word before it.
+    if (e === i && !(i < text.length && isSpace(text.charAt(i)))) return null;
+    var a = e;
+    while (a > 0 && HAS_ALNUM_RE.test(text.charAt(a - 1))) a--;
+    if (a === e) return null;
+    var w = text.slice(a, e).toLowerCase();
+    if (w !== 'a' && w !== 'an') return null;
+    return { s: a, e: e };
+  }
+
+  function firstWordOf(str) {
+    var m = str.match(/[\p{L}\p{N}]+/u);
+    return m ? m[0] : null;
+  }
+
+  function firstWordAfter(text, i) {
+    var n = text.length, k = i;
+    while (k < n && isSpace(text.charAt(k))) k++;
+    var a = k;
+    while (k < n && HAS_ALNUM_RE.test(text.charAt(k))) k++;
+    return k > a ? text.slice(a, k) : null;
+  }
+
+  // Runs over the findings that will actually be applied, in order, after the
+  // overlap sweep. Widening a span leftwards over the article can never collide
+  // with the finding before it: the repair is skipped when it would.
+  function repairArticles(text, findings) {
+    var prevEnd = -1, i, f, art, head, have, want, fixed;
+    for (i = 0; i < findings.length; i++) {
+      f = findings[i];
+      if (f.replacement === null) continue;
+      art = articleBefore(text, f.start);
+      if (art && art.s >= prevEnd) {
+        head = firstWordOf(f.replacement);
+        if (head === null) head = firstWordAfter(text, f.end);
+        if (head !== null) {
+          have = text.slice(art.s, art.e).toLowerCase();
+          want = wantsAn(head) ? 'an' : 'a';
+          if (want !== have) {
+            fixed = matchCapital(text.slice(art.s, art.e), want);
+            if (!f.display) f.display = { quote: f.quote, replacement: f.replacement };
+            f.replacement = fixed + text.slice(art.e, f.start) + f.replacement;
+            f.start = art.s;
+            f.quote = text.slice(f.start, f.end);
+          }
+        }
+      }
+      prevEnd = f.end;
+    }
+    return findings;
   }
 
   /* ------------------------------------------------------------ dictionaries */
@@ -289,38 +426,46 @@
     ['responsibility', 'duty'], ['visibility', 'a view'], ['similarity', 'likeness']
   ]);
 
-  // Buzzwords with a plain synonym. 46 entries, whole words only.
+  // Buzzwords, whole words only. A string value is a swap that is the same part
+  // of speech as the jargon and reads in any position the jargon reads in;
+  // null means the plain word depends on the sentence, so the rule points and
+  // leaves the text alone rather than guessing ("limited bandwidth" is not
+  // "limited time", "the Java ecosystem" is not "the Java set of tools").
   var JARGON = buildDict([
     ['leverage', 'use'], ['leverages', 'uses'], ['leveraging', 'using'], ['leveraged', 'used'],
     ['utilise', 'use'], ['utilize', 'use'], ['utilises', 'uses'], ['utilizes', 'uses'],
     ['utilising', 'using'], ['utilizing', 'using'],
     ['facilitate', 'help'], ['facilitates', 'helps'], ['facilitating', 'helping'],
     ['robust', 'solid'], ['paradigm', 'model'], ['synergy', 'overlap'], ['synergies', 'overlaps'],
-    ['holistic', 'whole'], ['seamless', 'smooth'], ['seamlessly', 'smoothly'],
-    ['scalable', 'able to grow'], ['actionable', 'usable'], ['impactful', 'effective'],
-    ['granular', 'detailed'], ['learnings', 'lessons'], ['optics', 'appearance'],
-    ['bandwidth', 'time'], ['ecosystem', 'set of tools'], ['stakeholders', 'the people affected'],
-    ['stakeholder', 'the person affected'], ['onboarding', 'setup'], ['ideate', 'think'],
-    ['operationalise', 'run'], ['operationalize', 'run'], ['incentivise', 'reward'],
-    ['incentivize', 'reward'], ['disrupt', 'upend'], ['disruptive', 'upending'],
-    ['mission-critical', 'essential'], ['state-of-the-art', 'newest'], ['cutting-edge', 'newest'],
-    ['best-in-class', 'best'], ['world-class', 'excellent'], ['turnkey', 'ready to run'],
+    ['seamless', 'smooth'], ['seamlessly', 'smoothly'],
+    ['actionable', 'usable'], ['impactful', 'effective'],
+    ['granular', 'detailed'], ['learnings', 'lessons'],
+    ['ideate', 'think'], ['operationalise', 'run'], ['operationalize', 'run'],
+    ['incentivise', 'reward'], ['incentivize', 'reward'], ['disrupt', 'upend'],
+    ['mission-critical', 'essential'], ['world-class', 'excellent'],
+    ['turnkey', 'ready-to-run'],
     ['going forward', 'from now on'], ['at the end of the day', 'in the end'],
-    ['low-hanging fruit', 'the easy wins'], ['best practice', 'the usual method'],
+    ['low-hanging fruit', 'the easy wins'],
     ['core competency', 'main skill'], ['value-add', 'benefit'], ['deep dive', 'close look'],
-    ['circle back', 'come back to it'], ['touch base', 'talk'], ['thought leadership', 'opinions'],
-    ['game changer', 'big change'], ['game-changer', 'big change'], ['win-win', 'good for both'],
-    ['move the needle', 'make a difference'], ['boil the ocean', 'do everything at once']
+    ['touch base', 'talk'], ['thought leadership', 'opinions'],
+    ['game changer', 'big change'], ['game-changer', 'big change'],
+    ['move the needle', 'make a difference'], ['boil the ocean', 'do everything at once'],
+    // Pointer-only: no swap holds up in every position these words appear in.
+    ['holistic', null], ['scalable', null], ['optics', null], ['bandwidth', null],
+    // Superlative glosses need "the" and cannot follow "a": "a newest platform".
+    ['state-of-the-art', null], ['cutting-edge', null], ['best-in-class', null],
+    ['ecosystem', null], ['stakeholders', null], ['stakeholder', null],
+    ['onboarding', null], ['disruptive', null], ['win-win', null],
+    ['best practice', null], ['circle back', null]
   ]);
 
   var CLAUSE_MARKERS = ['which', 'that', 'who', 'where', 'while', 'although', 'because'];
   var CLAUSE_SET = new Set(CLAUSE_MARKERS);
 
   var LONG_SENTENCE_WORDS = 28;
-  var SPLIT_MIN_SIDE = 8;
-  // Joints safe enough to turn into a full stop. No nesting, disjoint classes:
-  // linear on any input.
-  var JOINT_RE = /,[ \t]+(?:and|but)[ \t]+|;[ \t]+/g;
+  // A sentence has to be long AND tangled before the clause count means
+  // anything: "We know that that is the file that works." is nine words.
+  var CLAUSE_STACK_MIN_WORDS = 20;
 
   /* --------------------------------------------------- concreteness tables */
 
@@ -373,10 +518,17 @@
   var DETERMINERS = new Set(['the', 'a', 'an', 'our', 'their', 'its', 'his', 'her', 'my',
     'your', 'this', 'that', 'these', 'those', 'every', 'each']);
 
-  // "by the way", "by design" and friends are not agents.
+  // "by the way" and "by design" are not agents, and neither is "by Friday":
+  // an adverbial of time, place or manner after "by" names a deadline or a
+  // channel, not somebody who could be the subject of an active sentence.
   var BY_NON_AGENT = new Set(['way', 'now', 'then', 'default', 'hand', 'design', 'contrast',
     'comparison', 'accident', 'mistake', 'chance', 'itself', 'himself', 'herself', 'themselves',
-    'ourselves', 'necessity', 'definition', 'far', 'means', 'virtue', 'reference']);
+    'ourselves', 'necessity', 'definition', 'far', 'means', 'virtue', 'reference',
+    'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+    'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august',
+    'september', 'october', 'november', 'december',
+    'noon', 'midnight', 'morning', 'afternoon', 'evening', 'night', 'today',
+    'tomorrow', 'yesterday', 'email', 'phone', 'post', 'mail', 'accident']);
 
   /* --------------------------------------------------------- economy tables */
 
@@ -454,53 +606,21 @@
 
   /* ------------------------------------------------------------ clarity rules */
 
+  // Pointer only, always. Splitting at a joint produced subjectless fragments
+  // ("..., and then writes the bytes" -> ". Then writes the bytes"), because the
+  // second half of a coordination borrows its subject from the first half and
+  // nothing here can tell when it does. Where the sentence should break is a
+  // judgement about the argument, so the rule shows the length and stops.
   function ruleLongSentence(text, ctx) {
     var out = [], sents = ctx.sentences, i;
     for (i = 0; i < sents.length; i++) {
       var sn = sents[i];
       if (sn.words <= LONG_SENTENCE_WORDS) continue;
-      var joint = bestJoint(text, ctx.tokens, sn);
-      if (joint) {
-        out.push(finding(text, 'long-sentence', 'Long sentence', joint.start, joint.end,
-          'The sentence around this joint runs ' + sn.words + ' words; the lens flags over ' +
-          LONG_SENTENCE_WORDS + ', and this joint splits it into two.',
-          joint.replacement));
-      } else {
-        out.push(finding(text, 'long-sentence', 'Long sentence', sn.start, sn.end,
-          'This sentence runs ' + sn.words + ' words; the lens flags over ' +
-          LONG_SENTENCE_WORDS + ', and there is no joint that leaves ' + SPLIT_MIN_SIDE +
-          ' words on each side.', null));
-      }
+      out.push(finding(text, 'long-sentence', 'Long sentence', sn.start, sn.end,
+        'This sentence runs ' + sn.words + ' words; the lens flags over ' +
+        LONG_SENTENCE_WORDS + ', so break it where the second claim starts.', null));
     }
     return out;
-  }
-
-  // The most balanced ", and " / ", but " / "; " that leaves at least 8 words on
-  // each side. Balanced rather than first, so a trailing aside is not the split.
-  function bestJoint(text, tokens, sn) {
-    var body = sn.text, m, best = null, bestScore = -1;
-    JOINT_RE.lastIndex = 0;
-    while ((m = JOINT_RE.exec(body)) !== null) {
-      var abs = sn.start + m.index;
-      var after = sn.start + m.index + m[0].length;
-      if (after >= sn.end) continue;
-      var before = 0, k;
-      for (k = sn.from; k < sn.to; k++) { if (tokens[k].s < abs) before++; else break; }
-      var afterWords = 0;
-      for (k = sn.from; k < sn.to; k++) { if (tokens[k].s >= after) afterWords++; }
-      if (before < SPLIT_MIN_SIDE || afterWords < SPLIT_MIN_SIDE) continue;
-      var score = Math.min(before, afterWords);
-      if (score > bestScore) {
-        bestScore = score;
-        var c = text.charAt(after);
-        best = {
-          start: abs,
-          end: after + 1,
-          replacement: '. ' + c.toUpperCase()
-        };
-      }
-    }
-    return best;
   }
 
   function ruleClauseStack(text, ctx) {
@@ -513,33 +633,86 @@
           if (seen.indexOf(ctx.tokens[k].lw) < 0) seen.push(ctx.tokens[k].lw);
         }
       }
-      if (hits.length < 3) continue;
+      if (hits.length < 3 || sn.words < CLAUSE_STACK_MIN_WORDS) continue;
       // Span the evidence, not the whole sentence: word-level findings before
       // the first marker still survive the overlap filter.
       var a = hits[0].s, b = hits[hits.length - 1].e;
       out.push(finding(text, 'clause-stack', 'Stacked clauses', a, b,
-        'This sentence hangs ' + hits.length + ' subordinate clauses off each other (' +
-        seen.join(', ') + '), so the main claim is buried.', null));
+        'This ' + sn.words + '-word sentence hangs ' + hits.length +
+        ' subordinate clauses off each other (' + seen.join(', ') +
+        '), so the main claim is buried.', null));
     }
     return out;
   }
 
+  // Pointer only. Swapping the noun for its verb changes the part of speech and
+  // the sentence around it stops agreeing: "Our documentation is thin" became
+  // "Our docs is thin", "Compliance requires docs" became "Follow the rules
+  // requires docs". Naming the buried verb is the whole of the useful advice;
+  // the rewrite belongs to whoever knows what the subject is.
   function ruleNominalisation(text, ctx) {
     var out = [];
     scanDict(text, ctx.tokens, NOMINALISATIONS, function (i, j, key, value) {
       var t = ctx.tokens[i];
-      value = trimLeadingArticle(text, ctx.tokens, i, value);
       out.push(finding(text, 'nominalisation', 'Nominalisation', t.s, ctx.tokens[j].e,
-        q(t.w) + ' packs the verb ' + q(value) + ' into a noun.',
-        matchCapital(t.w, value)));
+        q(t.w) + ' buries the verb ' + q(value) + '; rebuild the sentence around that verb.',
+        null));
     });
     return out;
+  }
+
+  // A swap that lands the same word twice in one breath ("a highly effective,
+  // very impactful engineer" -> "an effective, effective engineer") is not an
+  // improvement, so the rule points at the jargon instead of introducing the
+  // repetition. Six tokens either side is the span a reader hears as one phrase.
+  var JARGON_ECHO_WINDOW = 6;
+
+  // Only the content words of the gloss count: every second phrase repeats
+  // "the", and "the easy wins" beside another "the" is not an echo.
+  var GLOSS_FUNCTION_WORDS = new Set(['a', 'an', 'the', 'of', 'to', 'in', 'on', 'at', 'by',
+    'for', 'and', 'or', 'from', 'with', 'as', 'it', 'is', 'be', 'so', 'now', 'that', 'this']);
+
+  function echoesNearby(tokens, i, j, value) {
+    var parts = value.toLowerCase().split(' ');
+    var from = Math.max(0, i - JARGON_ECHO_WINDOW);
+    var to = Math.min(tokens.length - 1, j + JARGON_ECHO_WINDOW), k, p;
+    for (k = from; k <= to; k++) {
+      if (k >= i && k <= j) continue;
+      for (p = 0; p < parts.length; p++) {
+        if (GLOSS_FUNCTION_WORDS.has(parts[p])) continue;
+        if (tokens[k].lw === parts[p]) return true;
+      }
+    }
+    return false;
   }
 
   function ruleJargon(text, ctx) {
     var out = [];
     scanDict(text, ctx.tokens, JARGON, function (i, j, key, value) {
       var a = ctx.tokens[i].s, b = ctx.tokens[j].e, quote = text.slice(a, b);
+      // Quoted material is mentioned, not used: 'The word "robust" is overused'
+      // is about the word itself and must survive verbatim.
+      if (quotedAlone(text, a, b)) return;
+      if (isCapitalised(quote)) {
+        // "Robust Systems Inc." is a name. A capital mid-sentence is never this
+        // rule's business, and a capital at a sentence start followed by another
+        // capital is a name that happens to open the sentence.
+        if (!startsSentence(text, a, ctx.atTextStart)) return;
+        var after = ctx.tokens[j + 1];
+        if (after && isGapBlank(text, b, after.s) && isCapitalised(after.w)) return;
+      }
+      if (value === null) {
+        out.push(finding(text, 'jargon', 'Jargon', a, b,
+          q(quote) + ' is business jargon whose plain word changes with the sentence; ' +
+          'name the thing you mean.', null));
+        return;
+      }
+      if (echoesNearby(ctx.tokens, i, j, value)) {
+        out.push(finding(text, 'jargon', 'Jargon', a, b,
+          q(quote) + ' is business jargon for ' + q(value) +
+          ', which already sits beside it; rephrase rather than repeat.', null));
+        return;
+      }
       value = trimLeadingArticle(text, ctx.tokens, i, value);
       out.push(finding(text, 'jargon', 'Jargon', a, b,
         q(quote) + ' is business jargon for ' + q(value) + '.',
@@ -562,10 +735,11 @@
     scanDict(text, ctx.tokens, HEDGES, function (i, j, key) {
       if (hedgeBlocked(ctx.tokens, i, j, key)) return;
       var a = ctx.tokens[i].s, b = ctx.tokens[j].e, quote = text.slice(a, b);
-      var edit = deletionEdit(text, a, b);
+      if (enclosedAlone(text, a, b)) return; // '(basically)' would become '()'
+      var edit = deletionEdit(text, a, b, ctx.atTextStart);
       out.push(finding(text, 'hedge', 'Hedge', edit.start, edit.end,
         q(quote) + ' softens the claim without changing what it says.',
-        edit.replacement));
+        edit.replacement, edit.display));
     });
     return out;
   }
@@ -599,11 +773,15 @@
     for (i = 0; i + 1 < tokens.length; i++) {
       var a = tokens[i], b = tokens[i + 1];
       if (!isAdverb(a.lw) || !WEAK_VERBS.has(b.lw)) continue;
+      // A capital means a name, not an adverb: "Emily is the release manager"
+      // must not lose Emily. Only an all-lowercase -ly token fires.
+      if (a.w !== a.lw) continue;
       if (!isGapBlank(text, a.e, b.s)) continue;
-      var edit = deletionEdit(text, a.s, a.e);
+      if (enclosedAlone(text, a.s, a.e)) continue;
+      var edit = deletionEdit(text, a.s, a.e, ctx.atTextStart);
       out.push(finding(text, 'adverb-prop', 'Adverb propping a weak verb', edit.start, edit.end,
         q(a.w) + ' props up the weak verb ' + q(b.w) + ' instead of a verb that carries the claim.',
-        edit.replacement));
+        edit.replacement, edit.display));
     }
     return out;
   }
@@ -634,6 +812,8 @@
         end = a + 1;
       }
       if (BY_NON_AGENT.has(tokens[end].lw)) continue;
+      if (/^[\p{N}]/u.test(tokens[end].w)) continue; // "by the 3rd", "by 40 percent"
+
       // let one modifier ride along: "by our nightly scheduler"
       if (isAdverb(tokens[end].lw) && tokens[end + 1] &&
           isGapBlank(text, tokens[end].e, tokens[end + 1].s)) end++;
@@ -655,10 +835,11 @@
     scanDict(text, ctx.tokens, FILLERS, function (i, j, key, value) {
       var a = ctx.tokens[i].s, b = ctx.tokens[j].e, quote = text.slice(a, b);
       if (value === DELETE) {
-        var edit = deletionEdit(text, a, b);
+        if (enclosedAlone(text, a, b)) return;
+        var edit = deletionEdit(text, a, b, ctx.atTextStart);
         out.push(finding(text, 'filler-phrase', 'Filler phrase', edit.start, edit.end,
           q(quote) + ' spends ' + words(key) + ' words and adds nothing the sentence needs.',
-          edit.replacement));
+          edit.replacement, edit.display));
       } else {
         value = trimLeadingArticle(text, ctx.tokens, i, value);
         out.push(finding(text, 'filler-phrase', 'Filler phrase', a, b,
@@ -692,17 +873,33 @@
     return isAdverb(lw);
   }
 
+  // "not very useful" means "of little use"; cutting the intensifier turns it
+  // into "not useful", which is a different claim. Any negation in the two
+  // tokens before the intensifier takes the rule off the sentence.
+  var NEGATIONS = new Set(['not', 'never', 'hardly', 'barely', 'scarcely']);
+
+  function negatedBefore(tokens, i) {
+    for (var k = i - 1; k >= 0 && k >= i - 2; k--) {
+      var lw = tokens[k].lw, tail = lw.slice(-3);
+      if (NEGATIONS.has(lw)) return true;
+      if (lw.length > 3 && (tail === "n't" || tail === 'n\u2019t')) return true;
+    }
+    return false;
+  }
+
   function ruleVeryIntensifier(text, ctx) {
     var out = [];
     scanDict(text, ctx.tokens, INTENSIFIERS, function (i, j) {
       var nextTok = ctx.tokens[j + 1];
       if (!nextTok || !isGapBlank(text, ctx.tokens[j].e, nextTok.s)) return;
       if (!looksAdjectival(nextTok.lw)) return;
+      if (negatedBefore(ctx.tokens, i)) return;
       var a = ctx.tokens[i].s, b = ctx.tokens[j].e, quote = text.slice(a, b);
-      var edit = deletionEdit(text, a, b);
+      if (enclosedAlone(text, a, b)) return;
+      var edit = deletionEdit(text, a, b, ctx.atTextStart);
       out.push(finding(text, 'very-intensifier', 'Empty intensifier', edit.start, edit.end,
         q(quote) + ' before ' + q(nextTok.w) + ' adds emphasis, not information.',
-        edit.replacement));
+        edit.replacement, edit.display));
     });
     return out;
   }
@@ -763,13 +960,18 @@
 
   /* --------------------------------------------------------------- critique */
 
-  function critique(text, lensId) {
+  // opts.atTextStart defaults to true. Pass false when text is a chunk cut out
+  // of a longer draft: offset 0 is then mid-sentence, and no rule may treat it
+  // as a sentence start or recapitalise the word sitting there.
+  function critique(text, lensId, opts) {
     text = toText(text);
     var rules = LENS_RULES.get(lensId);
     if (!rules) throw new Error('critic-loop: unknown lens "' + lensId + '"');
 
+    var atTextStart = !(opts && opts.atTextStart === false);
     var tokens = tokenize(text);
-    var ctx = { tokens: tokens, sentences: sentencesWithTokens(text, tokens) };
+    var ctx = { tokens: tokens, sentences: sentencesWithTokens(text, tokens),
+                atTextStart: atTextStart };
 
     var raw = [], r, i, produced, k;
     for (r = 0; r < rules.length; r++) {
@@ -781,25 +983,38 @@
     }
 
     // Sort: earliest start wins, then the longer span, then the rule that comes
-    // first in this lens's list. Then sweep left to right keeping only findings
-    // that start at or after the end of the last one kept — the guarantee that
-    // applyFindings can rewrite right-to-left without offsets colliding.
-    raw.sort(function (a, b) {
+    // first in this lens's list.
+    function order(a, b) {
       if (a.start !== b.start) return a.start - b.start;
       var la = a.end - a.start, lb = b.end - b.start;
       if (la !== lb) return lb - la;
       if (a._order !== b._order) return a._order - b._order;
       return a.rule < b.rule ? -1 : (a.rule > b.rule ? 1 : 0);
-    });
-
-    var findings = [], lastEnd = -1;
-    for (i = 0; i < raw.length; i++) {
-      if (raw[i].start < lastEnd) continue;
-      if (raw[i].end <= raw[i].start && raw[i].replacement === null) continue; // empty pointer
-      delete raw[i]._order;
-      findings.push(raw[i]);
-      lastEnd = raw[i].end;
     }
+    raw.sort(order);
+
+    // Non-overlap is a constraint on rewriting, not on reporting: two edits that
+    // share a character cannot both be applied. A pointer applies nothing, so it
+    // is exempt — a 30-word long-sentence pointer used to swallow every jargon
+    // fix inside it and the pass applied nothing at all. Sweep left to right
+    // over the applicable findings only; pointers all survive.
+    var applicable = [], pointers = [], f;
+    for (i = 0; i < raw.length; i++) {
+      f = raw[i];
+      if (f.end <= f.start && f.replacement === null) continue; // empty pointer
+      (f.replacement === null ? pointers : applicable).push(f);
+    }
+    var findings = [], lastEnd = -1;
+    for (i = 0; i < applicable.length; i++) {
+      if (applicable[i].start < lastEnd) continue;
+      findings.push(applicable[i]);
+      lastEnd = applicable[i].end;
+    }
+    findings = findings.concat(pointers);
+    findings.sort(order);
+    repairArticles(text, findings);
+    findings.sort(order);   // a repaired span starts one article earlier
+    for (i = 0; i < findings.length; i++) delete findings[i]._order;
     return { lens: lensId, findings: findings };
   }
 
@@ -832,16 +1047,52 @@
 
   /* ---------------------------------------------------------------- metrics */
 
+  var ALNUM_ONE_RE = /[\p{L}\p{N}]/u;
+  function isAlnumChar(ch) {
+    if (ch >= 'a' && ch <= 'z') return true;
+    if (ch >= 'A' && ch <= 'Z') return true;
+    if (ch >= '0' && ch <= '9') return true;
+    return ch > '\u007f' && ALNUM_ONE_RE.test(ch);
+  }
+
+  // One left-to-right pass over the characters, no slicing and no regex over an
+  // unbounded span: words and sentences are counted by the same walk, so the
+  // whole function is O(n) with a small constant on any input, punctuated or
+  // not. (The previous version ran a regex per non-space run and rebuilt the
+  // sentence list as an array of substrings.) Counts are byte-identical to
+  // \S+-with-a-letter for words and to splitSentences().length for sentences.
   function metrics(text) {
     text = toText(text);
-    var wordCount = 0, m;
-    NONSPACE_RE.lastIndex = 0;
-    while ((m = NONSPACE_RE.exec(text)) !== null) {
-      if (HAS_ALNUM_RE.test(m[0])) wordCount++;
+    var n = text.length, wordCount = 0, sentenceCount = 0;
+    var inWord = false, wordHasAlnum = false, segHasContent = false;
+    var i = 0, j, ch;
+    while (i < n) {
+      ch = text.charAt(i);
+      if (isSpace(ch)) {
+        if (inWord && wordHasAlnum) wordCount++;
+        inWord = false; wordHasAlnum = false;
+        i++;
+        continue;
+      }
+      inWord = true;
+      segHasContent = true;
+      if (TERMINATORS.indexOf(ch) >= 0) {
+        j = i;
+        while (j < n && TERMINATORS.indexOf(text.charAt(j)) >= 0) j++;
+        if (j >= n || isSpace(text.charAt(j))) {   // this run closes a sentence
+          if (wordHasAlnum) wordCount++;
+          inWord = false; wordHasAlnum = false;
+          sentenceCount++;
+          segHasContent = false;
+        }
+        i = j;                                     // "e.g." keeps its word going
+        continue;
+      }
+      if (!wordHasAlnum && isAlnumChar(ch)) wordHasAlnum = true;
+      i++;
     }
-    // Sentence count = terminator runs that close a sentence, plus one for a
-    // trailing unterminated fragment. Empty or whitespace-only text is 0.
-    var sentenceCount = splitSentences(text).length;
+    if (inWord && wordHasAlnum) wordCount++;
+    if (segHasContent) sentenceCount++;
     if (sentenceCount === 0 && wordCount > 0) sentenceCount = 1;
     var mean = sentenceCount === 0 ? 0 : Math.round((wordCount / sentenceCount) * 10) / 10;
     return {
@@ -904,41 +1155,77 @@
 
   /* -------------------------------------------------------------------- run */
 
-  function run(text, opts) {
+  // The loop, one pass at a time, so a caller can yield to the event loop
+  // between passes and abort mid-run. Yields the same pass objects run() used to
+  // build; returns { converged, stoppedAt, finalText, passCount }.
+  //
+  // Convergence is not "this lens found nothing". A draft whose only fault is
+  // hedges reported "converged after 1 pass" next to a metrics strip reading
+  // HEDGES 5, because clarity ran first and found nothing. A pass that finds
+  // nothing therefore checks every lens it has not run yet against the same
+  // unchanged text, and only stops when all of them are clean too. The results
+  // of that check are cached: the next pass reads the same text, so it never
+  // critiques it twice.
+  function* steps(text, opts) {
     text = toText(text);
     var maxPasses = (opts && typeof opts.maxPasses === 'number') ? opts.maxPasses : 3;
     if (!(maxPasses > 0)) maxPasses = 0;
     maxPasses = Math.min(Math.floor(maxPasses), LENSES.length);
+    var copts = { atTextStart: !(opts && opts.atTextStart === false) };
 
-    var passes = [], current = text, converged = false, stoppedAt = null, i;
+    var current = text, converged = false, stoppedAt = null, passCount = 0, i, j;
     // metrics() walks the whole text; the previous pass's "after" is this
     // pass's "before", so it is computed once per distinct draft, not twice.
     var mBefore = maxPasses > 0 ? metrics(current) : null;
+    var cache = new Map(), cacheText = null;
+
+    function look(t, lensId) {
+      if (cacheText !== t) { cache.clear(); cacheText = t; }
+      var hit = cache.get(lensId);
+      if (!hit) { hit = critique(t, lensId, copts); cache.set(lensId, hit); }
+      return hit;
+    }
+
     for (i = 0; i < maxPasses; i++) {
       var lens = LENSES[i];
       var before = current;
-      var res = critique(before, lens.id);
+      var res = look(before, lens.id);
       if (res.findings.length === 0) {
-        passes.push({
+        var clean = true;
+        for (j = i + 1; j < LENSES.length; j++) {
+          if (look(before, LENSES[j].id).findings.length > 0) { clean = false; break; }
+        }
+        yield {
           index: i, lens: lens.id, lensName: lens.name, findings: [],
           before: before, after: before, applied: 0,
           metricsBefore: mBefore, metricsAfter: mBefore
-        });
-        converged = true;
-        stoppedAt = i + 1;
-        break;
+        };
+        passCount++;
+        if (clean) { converged = true; stoppedAt = i + 1; break; }
+        continue; // a later lens still has work: this pass was not the end
       }
       var applied = applyFindings(before, res.findings);
       var mAfter = applied.text === before ? mBefore : metrics(applied.text);
-      passes.push({
+      yield {
         index: i, lens: lens.id, lensName: lens.name, findings: res.findings,
         before: before, after: applied.text, applied: applied.applied,
         metricsBefore: mBefore, metricsAfter: mAfter
-      });
+      };
+      passCount++;
       current = applied.text;
       mBefore = mAfter;
     }
-    return { passes: passes, converged: converged, stoppedAt: stoppedAt, finalText: current };
+    return { converged: converged, stoppedAt: stoppedAt,
+             finalText: current, passCount: passCount };
+  }
+
+  // Drains the generator. The page drives steps() directly, so the loop the
+  // tests exercise here is the same loop the page ships.
+  function run(text, opts) {
+    var it = steps(text, opts), passes = [], step;
+    while (!(step = it.next()).done) passes.push(step.value);
+    return { passes: passes, converged: step.value.converged,
+             stoppedAt: step.value.stoppedAt, finalText: step.value.finalText };
   }
 
   /* ----------------------------------------------------------------- export */
@@ -949,6 +1236,7 @@
     applyFindings: applyFindings,
     metrics: metrics,
     diffWords: diffWords,
+    steps: steps,
     run: run
   };
 })(typeof window !== 'undefined' ? window : this);
