@@ -3,7 +3,7 @@
 Paste a paragraph and watch an agent critique its own draft, three passes deep, with the critique
 shown between every draft — the part a diagram of this pattern always leaves out.
 
-![screenshot](screenshot.png)
+![Draft 0 with its metrics strip, then pass 1's clarity critique — five findings, each quoting its span, two with a replacement and three marked pointer-only — then draft 1 with the word diff](screenshot.png)
 
 **[Live demo](https://yinggarykairui.github.io/critic-loop/)**
 
