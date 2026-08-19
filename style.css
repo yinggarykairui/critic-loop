@@ -344,39 +344,52 @@ textarea.is-locked { background: var(--disabled-bg); cursor: default; }
 .findings { list-style: none; margin: 0; padding: 0; }
 .finding {
   border-top: 1px solid var(--border);
-  padding: 0.45rem 0 0.1rem;
+  padding: 0.1rem 0;
 }
-/* Closed, a finding is one line of rule name and one line of quote. Open, the quote
-   wraps in full. A pass with more than six findings ships closed. */
-.finding:not([open]) > summary .quote {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.finding:first-child { border-top: 0; padding-top: 0; }
+.finding:first-child { border-top: 0; }
 
+/* Closed, a finding is one row: the disclosure triangle, the rule name and the quoted
+   span side by side, both clipped with an ellipsis rather than allowed to wrap, and the
+   row is at least a tap target tall. Open, the quote drops to its own full-width line and
+   the why and the replacement follow it. */
 .finding > summary {
   cursor: pointer;
   list-style: none;
-  display: block;
-  padding: 0.1rem 0 0.3rem;
+  display: flex;
+  align-items: center;
+  gap: 0.1rem 0.45rem;
+  min-height: 44px;
+  padding: 0.2rem 0;
 }
+.finding:not([open]) > summary { flex-wrap: nowrap; }
+/* Open, the row is a block again: the rule name sits on the first line and the quote drops
+   below it as a box the width of the quote, not a field stretched to the panel edge. */
+.finding[open] > summary { display: block; padding-top: 0.5rem; }
 .finding > summary::-webkit-details-marker { display: none; }
 .finding > summary::before {
   content: "\25B8";
   color: var(--accent);
+  flex: none;
   display: inline-block;
   width: 1em;
+  font-size: 1rem;
   font-family: var(--mono);
 }
 .finding[open] > summary::before { content: "\25BE"; }
 
 .rule-name {
+  /* The rule name keeps its own column: without a floor the quote's flex basis crushes a
+     long quote's rule name down to one letter and an ellipsis. */
+  flex: 0 1 auto;
+  min-width: 5.5rem;
   font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--muted);
   font-family: var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .quote {
@@ -392,6 +405,35 @@ textarea.is-locked { background: var(--disabled-bg); cursor: default; }
   word-break: break-word;
   white-space: pre-wrap;
 }
+/* Closed, the quote box is as wide as the quote and no wider: a row of boxes stretched to
+   the panel edge reads as a column of empty form fields. */
+.finding > summary .quote {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+.finding:not([open]) > summary .quote {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.finding[open] > summary .quote {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0.35rem 0 0 1em;
+}
+
+/* Expand all / collapse all, one per critique panel. */
+.findings-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0 0 0.35rem;
+}
+.findings-controls .btn { flex: 0 0 auto; }
+.expand-all { font-size: 0.85rem; }
 
 .finding-body { margin: 0.3rem 0 0.5rem 1em; }
 .why { margin: 0 0 0.35rem; font-size: 0.9rem; }

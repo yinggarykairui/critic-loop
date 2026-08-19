@@ -8,7 +8,11 @@
   var STEP_MS = 250;
   var DRAFT_DISPLAY_CHARS = 6000;    /* panels show this much; copy and export use all of it */
   var FINDINGS_RENDER_CAP = 60;
-  var FINDINGS_OPEN_CAP = 6;         /* a pass with more findings than this renders them closed */
+  /* A pass with more findings than this renders them closed. A closed finding is one row
+     now, so ten of them are ten rows, not ten boxes: every pass of the three samples but
+     one opens with its why and its replacement on screen, and the one that does not is one
+     press of Expand all away. */
+  var FINDINGS_OPEN_CAP = 10;
   var FINDINGS_KEEP_CAP = 3000;      /* how many finding objects a pass holds on to */
   var DIFF_CHAR_LIMIT = 12000;       /* above this the word diff is skipped, and says so */
   var CHUNK_THRESHOLD = 6000;        /* text longer than this is critiqued in chunks */
@@ -269,12 +273,33 @@
     { key: 'hedges', label: 'hedges' }
   ];
 
-  function metricsStrip(m, prev, aria) {
+  /* Mean sentence length is words divided by sentences, so for a draft of one sentence it
+     is the word count again — the strip used to print the same number in two columns. The
+     column is dropped whenever every draft this strip covers is a single sentence, and
+     kept whenever it says something the words column does not. */
+  function oneSentenceThroughout(m, prev) {
+    var cur = m && typeof m.sentences === 'number' ? m.sentences : null;
+    var was = prev && typeof prev.sentences === 'number' ? prev.sentences : null;
+    return cur === 1 && (was === null || was === 1);
+  }
+
+  /* `applied` is the count applyFindings actually made in this pass — not a property of the
+     text, but the one number that says a pass which changed the draft changed it. It is
+     left out where there is nothing to report it for, as on draft 0. */
+  function metricsStrip(m, prev, aria, applied) {
     var wrap = el('div', 'metrics');
     wrap.setAttribute('role', 'group');
     wrap.setAttribute('aria-label', aria || 'Metrics for this draft');
+    if (typeof applied === 'number') {
+      var ed = el('span', 'metric');
+      ed.appendChild(el('span', 'metric-name', 'edits applied '));
+      ed.appendChild(el('span', 'metric-val', count(applied)));
+      wrap.appendChild(ed);
+    }
+    var drop = oneSentenceThroughout(m, prev);
     for (var i = 0; i < METRIC_ROWS.length; i++) {
       var row = METRIC_ROWS[i];
+      if (row.key === 'meanSentenceLength' && drop) continue;
       var cur = m && typeof m[row.key] === 'number' ? m[row.key] : 0;
       var item = el('span', 'metric');
       item.appendChild(el('span', 'metric-name', row.label + ' '));
@@ -456,9 +481,9 @@
     }
 
     p.appendChild(el('p', 'pass-summary',
-      applied === 1 ? '1 finding applied to make this draft.'
-        : count(applied) + ' findings applied to make this draft.'));
-    p.appendChild(metricsStrip(mAfter, mBefore));
+      applied === 1 ? 'One finding was applied to make this draft.'
+        : count(applied) + ' findings were applied to make this draft.'));
+    p.appendChild(metricsStrip(mAfter, mBefore, null, applied));
     addTranscript(p);
   }
 
@@ -499,6 +524,41 @@
     return d;
   }
 
+  /* One button per critique panel, opening or closing every finding in it. It is a real
+     button, so it is in the tab order and answers Enter and Space, and its aria-expanded
+     says which way it will go — recomputed whenever any finding in the list is opened or
+     closed by hand, so the label and the state never lie about the list. The toggle event
+     does not bubble, so the listener runs in the capture phase. */
+  function expandAllControl(list) {
+    var row = el('div', 'findings-controls');
+    var btn = el('button', 'btn btn-quiet expand-all');
+    btn.type = 'button';
+    btn.setAttribute('aria-controls', list.id);
+
+    function items() { return list.querySelectorAll('details.finding'); }
+    function allOpen() {
+      var d = items(), i;
+      if (!d.length) return false;
+      for (i = 0; i < d.length; i++) if (!d[i].open) return false;
+      return true;
+    }
+    function sync() {
+      var open = allOpen();
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btn.textContent = open ? 'Collapse all' : 'Expand all';
+    }
+    btn.addEventListener('click', function () {
+      var want = !allOpen();
+      var d = items(), i;
+      for (i = 0; i < d.length; i++) d[i].open = want;
+      sync();
+    });
+    list.addEventListener('toggle', sync, true);
+    sync();
+    row.appendChild(btn);
+    return row;
+  }
+
   function renderCritique(index, lens, findings, info) {
     info = info || {};
     var p = panel('critique');
@@ -523,6 +583,7 @@
     }
 
     var list = el('ul', 'findings');
+    list.id = 'findings-' + index;
     var shown = Math.min(findings.length, FINDINGS_RENDER_CAP);
     var openThem = total <= FINDINGS_OPEN_CAP;
     for (var i = 0; i < shown; i++) {
@@ -530,6 +591,7 @@
       li.appendChild(renderFinding(findings[i], openThem));
       list.appendChild(li);
     }
+    p.appendChild(expandAllControl(list));
     p.appendChild(list);
     if (total > shown) {
       p.appendChild(el('p', 'capped-note',
@@ -544,13 +606,16 @@
   /* Says which number means what. Pointers are never applied, and a live quote the page
      could not place is never applied either, so "found" and "applied" are different counts. */
   function passSummary(findings, total, applied, chunks) {
-    var head = count(total) + (total === 1 ? ' finding' : ' findings') +
-      (chunks > 1 ? ' across ' + count(chunks) + ' chunks' : '') + '. ';
+    var head = (total === 1 ? 'One finding' : count(total) + ' findings') +
+      (chunks > 1 ? ' across ' + count(chunks) + ' chunks' : '');
     if (applied === total) {
-      return head + (total === 1 ? 'It was applied to the next draft.'
-        : 'All ' + count(total) + ' were applied to the next draft.');
+      return head + (total === 1 ? ', applied to the next draft.'
+        : ', all applied to the next draft.');
     }
-    var body = count(applied) + ' of them ' + (applied === 1 ? 'was' : 'were') + ' applied to the next draft. ';
+    var body = head + ', ' +
+      (applied === 0 ? 'none applied to the next draft. '
+        : (applied === 1 ? 'one applied to the next draft. '
+          : count(applied) + ' applied to the next draft. '));
     if (findings.length === total) {
       var pointers = 0, unplaced = 0, i;
       for (i = 0; i < findings.length; i++) {
@@ -558,13 +623,13 @@
         if (f.replacement === null || f.replacement === undefined) pointers++;
         else if (f.located === false) unplaced++;
       }
-      if (pointers) body += count(pointers) + ' ' + (pointers === 1 ? 'is a pointer' : 'are pointers') +
-        ', which the loop never applies. ';
-      if (unplaced) body += count(unplaced) + ' ' + (unplaced === 1 ? 'quote' : 'quotes') +
-        ' could not be placed in this draft. ';
-      return head + body.replace(/\s+$/, '');
+      if (pointers) body += (pointers === 1 ? 'One is a pointer'
+        : count(pointers) + ' are pointers') + ', which the loop never applies. ';
+      if (unplaced) body += (unplaced === 1 ? 'One quote could not be placed in this draft. '
+        : count(unplaced) + ' quotes could not be placed in this draft. ');
+      return body.replace(/\s+$/, '');
     }
-    return head + body + count(total - applied) + ' ' + (total - applied === 1 ? 'was' : 'were') +
+    return body + (total - applied === 1 ? 'The other one was' : 'The other ' + count(total - applied) + ' were') +
       ' not applied: pointers, or quotes the loop could not place.';
   }
 
@@ -582,11 +647,13 @@
     draftBody(p, record.finalText);
 
     var mFinal = record.metrics0;
+    var appliedAll = 0;
     for (var i = 0; i < record.passes.length; i++) {
       if (record.passes[i].metricsAfter) mFinal = record.passes[i].metricsAfter;
+      appliedAll += record.passes[i].applied || 0;
     }
     p.appendChild(el('p', 'metrics-head', 'Draft 0 → final draft'));
-    p.appendChild(metricsStrip(mFinal, record.metrics0, 'Draft 0 to final draft'));
+    p.appendChild(metricsStrip(mFinal, record.metrics0, 'Draft 0 to final draft', appliedAll));
 
     var actions = el('div', 'final-actions');
     var copy = el('button', 'btn', 'Copy final draft');
