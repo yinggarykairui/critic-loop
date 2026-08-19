@@ -322,6 +322,14 @@ textarea.is-locked { background: var(--disabled-bg); cursor: default; }
   color: var(--muted);
   margin: 0.5rem 0 0;
 }
+/* The note about a capped quote rides with its quote inside the summary. Closed, the row
+   is one line and the stylesheet clips the quote to it, so the note is not part of that
+   line; open, it sits directly under the quote box it describes. */
+.finding:not([open]) > summary .quote-note { display: none; }
+.finding[open] > summary .quote-note {
+  display: block;
+  margin: 0.25rem 0 0 1em;
+}
 
 /* metrics */
 .metrics {

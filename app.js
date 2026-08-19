@@ -105,6 +105,25 @@
     return { text: t.slice(0, limit), truncated: true, total: t.length };
   }
 
+  /* A quoted span is capped like every other long thing on this page, but a quote cut
+     mid-word reads as broken text rather than shortened text. So the cut moves back to the
+     last space at or before the cap, the trailing space goes, and an ellipsis ends the
+     line: the elision is on screen, in the quote itself. shown is how many characters of
+     the source are on screen, which is what the note beside the quote states — it is the
+     length after the word-boundary walk, not the cap. A span with no space inside the cap
+     falls back to a hard cut, without splitting a surrogate pair. */
+  function shortenQuoteForDisplay(text, limit) {
+    var t = String(text == null ? '' : text);
+    if (t.length <= limit) return { text: t, truncated: false, total: t.length, shown: t.length };
+    var end = limit;
+    while (end > 0 && !/\s/.test(t.charAt(end))) end--;
+    var head = (end > 0 ? t.slice(0, end) : t.slice(0, limit)).replace(/\s+$/, '');
+    if (!head) head = t.slice(0, limit);
+    var last = head.charCodeAt(head.length - 1);
+    if (last >= 0xd800 && last <= 0xdbff) head = head.slice(0, -1);
+    return { text: head + '\u2026', truncated: true, total: t.length, shown: head.length };
+  }
+
   /* ---------- keeping the loop on screen ----------
      The transcript sits below the fold, so a run that is not scrolled to plays where
      nobody can see it. The page follows the newest panel only while the reader is still
@@ -499,7 +518,17 @@
 
     var s = document.createElement('summary');
     s.appendChild(el('span', 'rule-name', String(f.ruleName || f.rule || 'Finding')));
-    s.appendChild(el('span', 'quote', shortenForDisplay(quoteText, QUOTE_DISPLAY_CHARS).text));
+    var shownQuote = shortenQuoteForDisplay(quoteText, QUOTE_DISPLAY_CHARS);
+    s.appendChild(el('span', 'quote', shownQuote.text));
+    /* The cap says so in the same shape as the draft and listing caps. It sits under the
+       quote, inside the summary, so it is read as being about that quote and nothing else.
+       Closed, a finding is one row and every quote in it is clipped to the row's width by
+       the stylesheet whatever its length, so the note shows with the open finding. */
+    if (shownQuote.truncated) {
+      s.appendChild(el('span', 'truncated-note quote-note',
+        'Showing the first ' + count(shownQuote.shown) + ' of ' + count(shownQuote.total) +
+        ' characters of this quoted span. The exported transcript carries the whole span.'));
+    }
     d.appendChild(s);
 
     var body = el('div', 'finding-body');
