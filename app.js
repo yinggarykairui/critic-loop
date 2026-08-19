@@ -392,8 +392,9 @@
     if (f.replacement === null || f.replacement === undefined) {
       repl.appendChild(el('span', 'repl-none', 'Pointer only — the loop will not rewrite this one for you.'));
     } else if (f.located === false) {
-      repl.appendChild(el('span', 'repl-none',
-        'The model quoted text that is not in this draft, so nothing was changed.'));
+      repl.appendChild(el('span', 'repl-none', f.reason === 'overlap'
+        ? 'That quote is in this draft, but it overlaps a finding earlier in the list, so this one was left alone.'
+        : 'The model quoted text that is not in this draft, so nothing was changed.'));
     } else {
       var shownRepl = (disp && disp.replacement !== undefined && disp.replacement !== null)
         ? String(disp.replacement) : String(f.replacement);
@@ -576,19 +577,23 @@
         out.push('Found nothing under this lens. The draft is unchanged.');
         out.push('');
       } else {
-        var listed = Math.min(p.findings.length, 400);
-        for (var j = 0; j < listed; j++) {
+        /* No cap: this is a file download, so it lists every finding the pass kept. */
+        for (var j = 0; j < p.findings.length; j++) {
           var f = p.findings[j];
           out.push('- **' + String(f.ruleName || f.rule || 'finding') + '** — quote: "' +
             String(f.quote == null ? '' : f.quote).replace(/\s+/g, ' ') + '"');
           out.push('  - why: ' + String(f.why == null ? '' : f.why));
           out.push('  - ' + (f.replacement === null || f.replacement === undefined
             ? 'pointer only, not applied'
-            : (f.located === false ? 'quote not found in the draft, not applied'
+            : (f.located === false
+              ? (f.reason === 'overlap'
+                ? 'quote is in the draft but overlaps an earlier finding, not applied'
+                : 'quote not found in the draft, not applied')
               : 'replacement: "' + String(f.replacement) + '"')));
         }
-        if (p.total > listed) {
-          out.push('- (' + (p.total - listed) + ' further findings not listed)');
+        if (p.total > p.findings.length) {
+          out.push('- (' + (p.total - p.findings.length) +
+            ' further findings were counted but not kept in memory, so they are not listed)');
         }
         out.push('');
         out.push('Applied: ' + p.applied + ' of ' + p.total + '.');
@@ -690,7 +695,9 @@
     return null;
   }
 
-  /* Turn loose model output into findings with real, non-overlapping spans in `text`. */
+  /* Turn loose model output into findings with real, non-overlapping spans in `text`.
+     Two different failures are kept apart: a quote that is not in the draft at all, and
+     a quote that is in the draft but sits inside a span an earlier finding already claimed. */
   function locateFindings(items, text) {
     var out = [];
     var taken = [];
@@ -710,14 +717,15 @@
       }
       var f = {
         rule: 'live', ruleName: ruleName, quote: quote, why: why,
-        replacement: replacement, start: start, end: start + quote.length, located: start !== -1
+        replacement: replacement, start: start, end: start + quote.length,
+        located: start !== -1, reason: (start === -1 ? 'missing' : null)
       };
       if (f.located) {
         var overlaps = false;
         for (var k = 0; k < taken.length; k++) {
           if (f.start < taken[k][1] && taken[k][0] < f.end) { overlaps = true; break; }
         }
-        if (overlaps) { f.located = false; f.start = -1; f.end = -1; }
+        if (overlaps) { f.located = false; f.reason = 'overlap'; f.start = -1; f.end = -1; }
         else taken.push([f.start, f.end]);
       } else { f.start = -1; f.end = -1; }
       out.push(f);
