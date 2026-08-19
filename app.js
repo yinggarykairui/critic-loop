@@ -179,9 +179,14 @@
   /* ---------- engine presence ---------- */
 
   var CL = window.CriticLoop;
-  if (!CL || typeof CL.critique !== 'function') {
+  /* The page owns no critic and no verdict of its own: it needs the engine's critique,
+     its convergence test and its wording, or it has nothing honest to show. */
+  var engineOk = !!(CL && typeof CL.critique === 'function' && typeof CL.applyFindings === 'function' &&
+    typeof CL.metrics === 'function' && typeof CL.steps === 'function' &&
+    typeof CL.tailClean === 'function' && typeof CL.verdict === 'function');
+  if (!engineOk) {
     els.run.disabled = true;
-    setStatus('The critic engine did not load, so nothing can run. critic.js is missing.', 'error');
+    setStatus('The critic engine did not load, so nothing can run. critic.js is missing or older than this page.', 'error');
   }
 
   function lenses() {
@@ -207,42 +212,34 @@
   }
 
   /* ---------- the verdict ----------
-     One function builds the sentence. The status bar, the Result panel and the export
-     all call it, so the three can never disagree. */
+     CriticLoop.verdict() is the only implementation of the wording, and the only thing
+     that decides which of the three outcomes a run had: stopped early before the cap,
+     reached the cap clean, reached the cap with findings outstanding. The status line,
+     the Result panel and the exported Markdown all print the string it returns, so the
+     three cannot disagree by a single byte. */
 
   function verdictLine(rec) {
     var n = rec.passes.length;
-    if (rec.converged) {
-      var at = (typeof rec.stoppedAt === 'number') ? rec.stoppedAt : n;
-      return 'Converged after ' + count(at) + (at === 1 ? ' pass.' : ' passes.');
-    }
-    var unparsed = 0, found = 0, i;
-    for (i = 0; i < rec.passes.length; i++) {
-      if (rec.passes[i].unparsed !== undefined) unparsed++;
-      else if (rec.passes[i].total > 0) found++;
-    }
-    var passes = count(n) + (n === 1 ? ' pass' : ' passes');
-    if (n > 0 && unparsed === n) {
-      return passes + ', and no reply could be parsed. Nothing was found.';
-    }
-    if (unparsed > 0) {
-      return passes + ', ' + count(unparsed) + ' of them unparseable. The rest still found things.';
-    }
-    if (found === 0) return passes + ', and nothing more was found.';
-    return passes + ', still finding things.';
+    return CL.verdict({
+      passesRun: n,
+      /* converged is the early stop, and a run that spent the cap did not stop early —
+         whatever a lookahead over an empty range said on its last pass. Reaching the cap
+         with a clean draft is the other outcome, and cappedClean is what names it. */
+      converged: !!rec.converged && n < MAX_PASSES,
+      cappedClean: !!rec.cappedClean
+    });
   }
 
-  function verdictBlurb(rec) {
-    if (rec.converged) {
-      return 'The draft was clean under every lens that had not run yet, so the loop stopped early.';
-    }
+  /* The line under the verdict explains the machine, and never restates the outcome. */
+  function verdictNote(rec) {
     var unparsed = 0;
     for (var i = 0; i < rec.passes.length; i++) if (rec.passes[i].unparsed !== undefined) unparsed++;
     if (unparsed > 0) {
       return 'An unparseable reply is not a pass that found nothing. ' + count(unparsed) +
         ' of ' + count(rec.passes.length) + ' replies could not be read as findings.';
     }
-    return 'The cap is ' + MAX_PASSES + ' passes. One lens runs per pass.';
+    return 'The cap is ' + MAX_PASSES + ' passes. One lens runs per pass, and a pass that finds ' +
+      'nothing is checked against every lens that has not run yet before the loop calls it clean.';
   }
 
   /* ---------- metrics strip ---------- */
@@ -533,7 +530,7 @@
     var p = panel('final');
     label(p, 'Result');
     p.appendChild(el('p', 'final-head', verdictLine(record)));
-    p.appendChild(el('p', 'panel-blurb', verdictBlurb(record)));
+    p.appendChild(el('p', 'panel-blurb', verdictNote(record)));
     draftBody(p, record.finalText);
 
     var mFinal = record.metrics0;
@@ -929,32 +926,30 @@
     };
   }
 
-  /* Convergence, for the drivers the page steps itself: the draft is clean under every
-     lens that has not run yet. Those lenses are simply run, and a tail of parsed passes
-     that found nothing is what "clean under the rest" means. Nothing is guessed. */
-  function tailConverged(passes) {
-    var at = null;
-    for (var i = passes.length - 1; i >= 0; i--) {
-      var p = passes[i];
-      if (p.unparsed !== undefined || p.total > 0) break;
-      at = i + 1;
-    }
-    return { converged: at !== null, stoppedAt: at };
-  }
+  /* The drivers the page steps itself ask the engine exactly the questions steps() asks,
+     with the same function and the same arguments: CriticLoop.tailClean() is the only
+     convergence test on every offline path, and the three flags it produces are worded by
+     CriticLoop.verdict() and nothing else.
 
+     Live mode is the one case tailClean cannot answer, because the lenses are the model's
+     and the page cannot run the ones that have not run without calling the API again. It
+     reads what the model actually returned instead — a reply that parsed and held no
+     findings — so it can say the draft came out clean at the cap, and it never claims an
+     early stop it did not make. */
   function pagePasses(text, opts) {
     var L = lenses();
     var passes = [];
     var current = text;
     var mCurrent = null;
     var i = 0;
+    var live = !!opts.live;
+    var converged = false, cappedClean = false, stopped = false;
 
     function result() {
-      var t = tailConverged(passes);
       return {
         done: true,
         value: {
-          converged: t.converged, stoppedAt: t.stoppedAt,
+          converged: converged, cappedClean: cappedClean,
           finalText: current, passCount: passes.length
         }
       };
@@ -962,7 +957,7 @@
 
     return {
       next: function () {
-        if (i >= MAX_PASSES || i >= L.length) return Promise.resolve(result());
+        if (stopped || i >= MAX_PASSES || i >= L.length) return Promise.resolve(result());
         var lens = L[i];
         var index = i + 1;
         i++;
@@ -984,6 +979,19 @@
           passes.push(pass);
           current = after;
           mCurrent = mAfter;
+
+          /* An unparseable reply is not a pass that found nothing. */
+          var foundNothing = (pass.unparsed === undefined && pass.total === 0);
+          var atCap = (i >= MAX_PASSES || i >= L.length);
+          if (foundNothing && !live) {
+            converged = CL.tailClean(current, i, { through: MAX_PASSES }).clean;
+            if (converged && !atCap) stopped = true;
+          }
+          if (atCap || stopped) {
+            /* The cap is spent: whether anything is left is a question about the final
+               draft, so it is asked of the final draft and of every lens. */
+            cappedClean = atCap && (live ? foundNothing : CL.tailClean(current, 0).clean);
+          }
           return { done: false, value: pass };
         });
       }
@@ -1032,7 +1040,7 @@
 
   function runLoop() {
     if (state.running) return;
-    if (!CL || typeof CL.critique !== 'function') return;
+    if (!engineOk) return;
 
     /* Validate before anything is cleared: a blank box must not destroy a finished run. */
     var raw = els.input.value;
@@ -1075,13 +1083,14 @@
     var chunked = !live && raw.length > CHUNK_THRESHOLD;
     var record = {
       engineLabel: live ? 'live (' + model + ')' : 'offline rule-based critic',
-      draft0: raw, metrics0: null, passes: [], converged: false, stoppedAt: null, finalText: raw,
+      draft0: raw, metrics0: null, passes: [], converged: false, cappedClean: false, finalText: raw,
       chunks: 1
     };
 
     var driver;
     if (live) {
       driver = pagePasses(raw, {
+        live: true,
         critique: function (before, lens) {
           return liveCritique(before, lens, state.aborter && state.aborter.signal, key, model)
             .then(function (res) {
@@ -1100,20 +1109,8 @@
       driver = pagePasses(raw, {
         critique: function (before, lens) { return chunkedPass(before, lens.id, alive); }
       });
-    } else if (CL && typeof CL.steps === 'function') {
-      driver = enginePasses(raw);
     } else {
-      /* Older engine without steps(): the page steps the same loop with critique(). */
-      driver = pagePasses(raw, {
-        critique: function (before, lens) {
-          var c = CL.critique(before, lens.id, { atTextStart: true });
-          var fs = c.findings || [];
-          var ap = CL.applyFindings(before, fs);
-          return Promise.resolve({
-            findings: fs, total: fs.length, after: ap.text, applied: ap.applied, chunks: 1
-          });
-        }
-      });
+      driver = enginePasses(raw);
     }
 
     var chain = yieldToPaint().then(function () {
@@ -1176,7 +1173,7 @@
       /* The verdict is the generator's, not the page's. */
       if (result) {
         record.converged = !!result.converged;
-        record.stoppedAt = (typeof result.stoppedAt === 'number') ? result.stoppedAt : null;
+        record.cappedClean = !!result.cappedClean;
         if (typeof result.finalText === 'string') record.finalText = result.finalText;
       }
       state.transcript = record;
