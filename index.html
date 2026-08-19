@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>critic-loop — draft, critique, revise</title>
+<meta name="description" content="A one-page demo of the draft to critique to revise loop. Every intermediate state is shown.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip-link" href="#transcript">Skip to transcript</a>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <h1>critic-loop</h1>
+    <p class="lede">Paste a paragraph. A critic reads it, says what is wrong and where, and the
+      paragraph is rewritten. Three passes, every intermediate state shown.</p>
+    <p class="honesty">The default engine is <strong>a deterministic rule-based critic running in
+      your browser</strong>. No model, no network, no key. Same paragraph in, same critique out,
+      every time. Live mode below swaps in a real model if you bring your own Anthropic key.</p>
+  </header>
+
+  <main>
+
+  <section class="card" aria-labelledby="input-h">
+    <h2 id="input-h">Paragraph</h2>
+
+    <label class="field-label" for="input">Text to critique</label>
+    <textarea id="input" rows="7" spellcheck="false"
+      placeholder="Paste a paragraph here. English prose works best — the offline lenses only know English."></textarea>
+
+    <p class="counter"><span id="counter">0 characters</span></p>
+
+    <div class="samples">
+      <span class="samples-label" id="samples-h">Samples</span>
+      <div class="btn-row" role="group" aria-labelledby="samples-h">
+        <button type="button" class="btn btn-quiet" data-sample="corporate">Bloated corporate</button>
+        <button type="button" class="btn btn-quiet" data-sample="hedged">Over-hedged technical</button>
+        <button type="button" class="btn btn-quiet" data-sample="clean">Already clean</button>
+      </div>
+    </div>
+
+    <div class="run-row">
+      <button type="button" class="btn btn-primary" id="run">Run</button>
+      <button type="button" class="btn" id="stop" disabled>Stop</button>
+      <button type="button" class="btn btn-quiet" id="skip" hidden>Skip animation</button>
+      <span class="status" id="status" role="status" aria-live="polite"></span>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="engine-h">
+    <h2 id="engine-h">Engine</h2>
+    <fieldset class="engine">
+      <legend class="sr-only">Choose an engine</legend>
+      <label class="radio"><input type="radio" name="engine" value="offline" id="engine-offline" checked>
+        <span><span class="radio-title">Offline critic</span> <span class="radio-note">default · rules in this page · no network</span></span></label>
+      <label class="radio"><input type="radio" name="engine" value="live" id="engine-live">
+        <span><span class="radio-title">Live — your Anthropic key</span> <span class="radio-note">calls api.anthropic.com from your browser</span></span></label>
+    </fieldset>
+
+    <div class="live-panel" id="live-panel" hidden>
+      <div class="live-fields">
+        <p class="live-field">
+          <label class="field-label" for="api-key">Anthropic API key</label>
+          <input type="password" id="api-key" autocomplete="off" spellcheck="false" placeholder="sk-ant-...">
+        </p>
+        <p class="live-field">
+          <label class="field-label" for="model">Model</label>
+          <input type="text" id="model" autocomplete="off" spellcheck="false" value="claude-sonnet-4-5">
+        </p>
+      </div>
+      <p class="live-note">The key is held in a page variable for the length of this run. It is sent
+        only to api.anthropic.com, never stored anywhere, and never included in the exported
+        transcript.</p>
+    </div>
+  </section>
+
+  <section id="transcript-section" aria-labelledby="transcript-h">
+    <h2 id="transcript-h">Transcript</h2>
+    <p class="empty-note" id="empty-note">Nothing yet. Load a sample or paste a paragraph, then press Run.</p>
+    <div id="transcript" tabindex="-1"></div>
+  </section>
+
+  </main>
+
+  <footer class="foot">
+    <p>No storage of any kind. Nothing leaves the page in offline mode. Source is three files plus
+      the engine: index.html, style.css, app.js, critic.js.</p>
+  </footer>
+
+</div>
+
+<script type="text/plain" id="sample-corporate">In order to leverage the synergies across each and every one of our stakeholders, the implementation of the new paradigm has the ability to significantly improve the end result for the business, and due to the fact that a number of teams are involved in the optimisation of the process at this point in time, the utilisation of a holistic framework is very important for the purpose of driving alignment with regard to future plans.</script>
+<script type="text/plain" id="sample-hedged">It seems that the cache layer is somewhat unreliable under load, and it appears that a number of requests are perhaps dropped when the queue is relatively full, though the optimisation of the eviction policy might possibly help if the team is able to leverage the existing metrics pipeline for the purpose of measurement. Arguably the retry path is fairly robust. Various measurements typically suggest that latency is largely driven by the serialisation step, but this is possibly an artefact of the harness.</script>
+<script type="text/plain" id="sample-clean">The build takes 41 seconds. It compiles 312 files, links one binary, and writes a 4 MB archive. Two tests fail on Windows. Both fail in the path parser. The fix lands tomorrow.</script>
+
+<script src="critic.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
