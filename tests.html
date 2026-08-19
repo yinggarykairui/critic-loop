@@ -1358,6 +1358,90 @@
            'no article sentence', JSON.stringify(goodFindings.map(function (f) { return f.why; })));
   });
   ok('every repaired article is visible in its finding', articleShown === ARTICLE_CASES.length);
+
+  /* ==================================================================== */
+  g('C7b articles the engine will not guess');
+  // You cannot pronounce an arbitrary token, so the engine stops trying. It
+  // re-picks the article only where it can actually decide how the next word is
+  // said: an ordinary word by its letters, a numeral shape its rules cover, and
+  // an all-caps token only when that token is on the list it ships. Everything
+  // else — an acronym said as a word, a shouted word, a mixed-case token — keeps
+  // the article the author wrote. A repair that never happens reads fine; a
+  // repair that is wrong turns correct English into incorrect English.
+  function afterHedge(article, head) {
+    var t = 'We shipped ' + article + ' basically ' + head + ' build.';
+    return C.applyFindings(t, C.critique(t, 'concreteness').findings).text;
+  }
+  // The four cases measured in the review, before -> after.
+  eq('a NASA case keeps "a" (nassa, not en-ay-es-ay)',
+     C.applyFindings('a basically NASA case',
+       C.critique('a basically NASA case', 'concreteness').findings).text, 'a NASA case');
+  eq('a shouted STUPID keeps "a"', afterHedge('a', 'STUPID'), 'We shipped a STUPID build.');
+  eq('an mRNA sample keeps "an" (em-RNA)', afterHedge('an', 'mRNA'),
+     'We shipped an mRNA build.');
+  eq('an 1100 case is repaired to "an" (eleven hundred)', afterHedge('a', '1100'),
+     'We shipped an 1100 build.');
+  // The tokens the engine will not decide: both articles survive untouched.
+  var LEFT_ALONE = ['NASA', 'STUPID', 'NATO', 'SCUBA', 'LASER', 'RADAR', 'OPEC', 'UNESCO',
+    'FIFA', 'ZIP', 'WYSIWYG', 'AIDS', 'SWOT', 'IKEA', 'SQL', 'mRNA', 'iOS', 'eBay',
+    'iPhone', 'macOS', 'JavaScript', 'PostgreSQL', 'GraphQL', 'jQuery', 'LaTeX'];
+  ok('the leave-alone table covers at least 20 tokens', LEFT_ALONE.length >= 20);
+  LEFT_ALONE.forEach(function (head) {
+    ['a', 'an'].forEach(function (art) {
+      record('left alone: ' + art + ' ' + head, afterHedge(art, head) ===
+             'We shipped ' + art + ' ' + head + ' build.',
+             'We shipped ' + art + ' ' + head + ' build.', afterHedge(art, head));
+    });
+    var t = 'We shipped ' + (head === 'NASA' ? 'a' : 'an') + ' basically ' + head + ' build.';
+    record('and no finding claims an article change: ' + head,
+           C.critique(t, 'concreteness').findings.every(function (f) {
+             return f.why.indexOf('after the article') < 0;
+           }), 'no article sentence', JSON.stringify(C.critique(t, 'concreteness')
+             .findings.map(function (f) { return f.why; })));
+  });
+  // The tokens it ships, each marked by hand with the article a reader uses.
+  // Some are read as letters ("an es-em-es"), some as words ("a ram chip"):
+  // that is exactly why the list exists and the letters cannot stand in for it.
+  var LISTED = [
+    ['ID', 'an'], ['IP', 'an'], ['IDE', 'an'], ['MRI', 'an'], ['NFT', 'an'], ['ORM', 'an'],
+    ['ETA', 'an'], ['SDK', 'an'], ['SMS', 'an'], ['SSH', 'an'], ['SVG', 'an'], ['LLM', 'an'],
+    ['ML', 'an'], ['AI', 'an'], ['ROI', 'an'], ['SEO', 'an'], ['XSS', 'an'], ['HTML', 'an'],
+    ['QA', 'a'], ['PR', 'a'], ['CLI', 'a'], ['UX', 'a'], ['USB', 'a'], ['CPU', 'a'],
+    ['CSS', 'a'], ['KPI', 'a'], ['TLS', 'a'], ['DNS', 'a'], ['CDN', 'a'], ['UUID', 'a'],
+    ['RAM', 'a'], ['DOM', 'a'], ['GUI', 'a'], ['YAML', 'a'], ['JPEG', 'a'], ['PHP', 'a']
+  ];
+  ok('the shipped initialism table covers at least 20 tokens', LISTED.length >= 20);
+  LISTED.forEach(function (c) {
+    var head = c[0], want = c[1], wrong = want === 'an' ? 'a' : 'an';
+    record('repaired from the list: ' + wrong + ' ' + head + ' -> ' + want + ' ' + head,
+           afterHedge(wrong, head) === 'We shipped ' + want + ' ' + head + ' build.',
+           'We shipped ' + want + ' ' + head + ' build.', afterHedge(wrong, head));
+    record('and kept when it was already right: ' + want + ' ' + head,
+           afterHedge(want, head) === 'We shipped ' + want + ' ' + head + ' build.',
+           'We shipped ' + want + ' ' + head + ' build.', afterHedge(want, head));
+  });
+  // Numerals the rules cover explicitly, including the "eleven hundred" and
+  // "eighteen hundred" readings that a leading-group rule alone gets wrong.
+  var NUMERAL_CASES = [['1100', 'an'], ['1180', 'an'], ['1856', 'an'], ['1800', 'an'],
+    ['1899', 'an'], ['8000', 'an'], ['11000', 'an'], ['80', 'an'], ['8', 'an'],
+    ['1000', 'a'], ['1200', 'a'], ['1999', 'a'], ['2026', 'a'], ['100', 'a'], ['5', 'a']];
+  NUMERAL_CASES.forEach(function (c) {
+    var head = c[0], want = c[1], wrong = want === 'an' ? 'a' : 'an';
+    record('numeral repaired: ' + wrong + ' ' + head + ' -> ' + want + ' ' + head,
+           afterHedge(wrong, head) === 'We shipped ' + want + ' ' + head + ' build.',
+           'We shipped ' + want + ' ' + head + ' build.', afterHedge(wrong, head));
+    record('numeral kept: ' + want + ' ' + head,
+           afterHedge(want, head) === 'We shipped ' + want + ' ' + head + ' build.',
+           'We shipped ' + want + ' ' + head + ' build.', afterHedge(want, head));
+  });
+  // Correct English in, correct English out, over the four measured strings.
+  var MEASURED_CORRECT = ['We ran a basically NASA case.', 'That is an basically mRNA sample.',
+    'It is a basically STUPID idea.', 'He read an basically iOS report.'];
+  MEASURED_CORRECT.forEach(function (t) {
+    var out = C.applyFindings(t, C.critique(t, 'concreteness').findings).text;
+    record('the article the author wrote survives: ' + t,
+           out === t.replace('basically ', ''), t.replace('basically ', ''), out);
+  });
   // The repro strings from the re-vote gate, correct English before the loop
   // ever saw them: the loop must hand them back byte for byte.
   var CORRECT_ARTICLES = [

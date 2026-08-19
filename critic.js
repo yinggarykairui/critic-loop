@@ -293,44 +293,81 @@
   var TAKES_AN = new Set(['hour', 'hours', 'hourly', 'honest', 'honestly', 'honour',
     'honours', 'honor', 'honors', 'honourable', 'honorable', 'heir', 'heirs', 'heirloom']);
 
-  // Letters whose *name* opens with a vowel sound, so an initialism read letter
-  // by letter takes "an": ay, ee, ef, aitch, eye, el, em, en, oh, ar, es, ex.
-  // U ("you"), W ("double-you") and Y ("wye") are not here: "a URL", "a W3C
-  // note", "a Y combinator".
-  var AN_LETTERS = 'AEFHILMNORSX';
+  // An initialism's article depends on how a reader says it out loud, and the
+  // spelling does not tell you: "an API" is ay-pee-eye, but "a NASA case" is
+  // "nassa" and "a STUPID idea" is a shouted word, not letters. Reading the
+  // letters out is a guess, and a guess that turns the author's correct English
+  // into incorrect English is worse than no repair at all. So the all-caps
+  // forms this file will act on are listed here by hand, each with the article
+  // a reader actually uses. Anything not on this list is left alone.
+  //
+  // Deliberately absent: SQL, read both "es-cue-el" ("an SQL query") and
+  // "sequel" ("a SQL query"). Two readings means two correct articles, so the
+  // author's stands.
+  var INITIALISMS = {
+    // letter names that open with a vowel: A ay, E ee, F ef, H aitch, I eye,
+    // L el, M em, N en, O oh, R ar, S es, X ex
+    API: 'an', AI: 'an', AWS: 'an', EOL: 'an', ETA: 'an', ETL: 'an', FAQ: 'an',
+    FBI: 'an', HTML: 'an', HTTP: 'an', HTTPS: 'an', HR: 'an', ID: 'an', IDE: 'an',
+    IP: 'an', LED: 'an', LLM: 'an', ML: 'an', MRI: 'an', MVP: 'an', NDA: 'an',
+    NFT: 'an', ORM: 'an', RFC: 'an', ROI: 'an', RSS: 'an', SDK: 'an', SEO: 'an',
+    SLA: 'an', SMS: 'an', SSH: 'an', SSL: 'an', SVG: 'an', XML: 'an', XSS: 'an',
+    // letter names that open with a consonant: B bee, C see, D dee, G gee,
+    // J jay, K kay, P pee, Q cue, T tee, U you, V vee, W double-you, Y wye, Z zee
+    CDN: 'a', CI: 'a', CLI: 'a', CPU: 'a', CSS: 'a', CSV: 'a', CTA: 'a', DB: 'a',
+    DNS: 'a', GPS: 'a', GPU: 'a', JPEG: 'a', JSON: 'a', JVM: 'a', KPI: 'a', PDF: 'a',
+    PHP: 'a', PNG: 'a', PR: 'a', QA: 'a', TCP: 'a', TDD: 'a', TLS: 'a', UI: 'a',
+    URI: 'a', URL: 'a', USB: 'a', UUID: 'a', UX: 'a', VM: 'a', VPN: 'a',
+    W3C: 'a',
+    // read as words, not as letters, which is exactly why the letters cannot
+    // decide them: "a dom", "a gooey", "a ram chip", "a yamel file"
+    DOM: 'a', GUI: 'a', RAM: 'a', YAML: 'a'
+  };
 
   // How the leading digit group is read decides the article. Everything above
   // 999 is read in thousand-groups, so only the leading group is spoken first:
-  // 8000 is "eight thousand" (an), 11,000 "eleven thousand" (an), 1100 "one
-  // thousand one hundred" (a). Nothing else opens with a vowel sound: eight,
-  // eighty, eight hundred, eleven and eighteen are the whole list.
-  function digitsWantAn(digits) {
+  // 8000 is "eight thousand" (an), 11,000 "eleven thousand" (an), 1000 "one
+  // thousand" (a). Four digits opening 11 or 18 are read as two pairs instead —
+  // 1100 "eleven hundred", 1856 "eighteen fifty-six" — and both open with a
+  // vowel. Nothing else opens with a vowel sound: eight, eighty, eight hundred,
+  // eleven and eighteen are the whole list.
+  function digitsArticle(digits) {
+    if (digits.length === 4 &&
+        (digits.slice(0, 2) === '11' || digits.slice(0, 2) === '18')) return 'an';
     while (digits.length > 3) digits = digits.slice(0, ((digits.length - 1) % 3) + 1);
-    if (digits.length === 1) return digits === '8';
-    if (digits.length === 2) return digits === '11' || digits === '18' || digits.charAt(0) === '8';
-    return digits.charAt(0) === '8';   // 800-899 "eight hundred", nothing else
+    if (digits.length === 1) return digits === '8' ? 'an' : 'a';
+    if (digits.length === 2) {
+      return (digits === '11' || digits === '18' || digits.charAt(0) === '8') ? 'an' : 'a';
+    }
+    return digits.charAt(0) === '8' ? 'an' : 'a';   // 800-899 "eight hundred"
   }
 
   var LEADING_DIGITS_RE = /^[\p{Nd}]+/u;
-  var ALL_CAPS_RE = /^\p{Lu}{2,}$/u;
+  // An ordinary word: all lowercase, or one capital and then lowercase. Its
+  // first sound is its first letter, so the letter rules can decide it. Any
+  // other letter shape — ALL CAPS, "mRNA", "iOS", "JavaScript", a lone "X" —
+  // is not decidable from spelling.
+  var PLAIN_WORD_RE = /^\p{Lu}?\p{Ll}+$/u;
 
-  // "a" or "an" is decided by sound, not spelling, and the head word arrives in
-  // four flavours the letter rule alone gets wrong: initialisms spelled out
-  // ("an FAQ", "a URL"), numerals ("an 8-bit palette", "a 1-to-1 mapping"),
-  // /ju:/ words ("a unique case") and silent h ("an hourly job"). A hyphenated
+  // "a" or "an" is decided by sound, not spelling. Returns 'a', 'an', or null
+  // for "I cannot say" — an unknown all-caps token, a mixed-case token, a shape
+  // no rule here covers. null means the author's article stands: a repair that
+  // does not happen reads fine, a repair that is wrong does not. A hyphenated
   // or apostrophed head is decided by its first part, which is the part spoken
   // first: "8-bit" is read "eight bit".
-  function wantsAn(word) {
-    var w = String(word), cut = w.search(/[-–—'’]/);
+  function articleFor(word) {
+    var w = String(word), cut = w.search(/[-\u2013\u2014'\u2019]/);
     if (cut > 0) w = w.slice(0, cut);
+    if (w === '') return null;
+    if (Object.prototype.hasOwnProperty.call(INITIALISMS, w)) return INITIALISMS[w];
     var digits = w.match(LEADING_DIGITS_RE);
-    if (digits) return digitsWantAn(digits[0]);
-    if (ALL_CAPS_RE.test(w)) return AN_LETTERS.indexOf(w.charAt(0)) >= 0;
+    if (digits) return digitsArticle(digits[0]);
+    if (!PLAIN_WORD_RE.test(w)) return null;
     var lw = w.toLowerCase();
-    if (TAKES_AN.has(lw)) return true;
-    if (TAKES_A.has(lw)) return false;
-    if (lw.slice(0, 2) === 'eu') return false;   // euphoric, European: /juː/
-    return 'aeiou'.indexOf(lw.charAt(0)) >= 0;
+    if (TAKES_AN.has(lw)) return 'an';
+    if (TAKES_A.has(lw)) return 'a';
+    if (lw.slice(0, 2) === 'eu') return 'a';     // euphoric, European: /ju:/
+    return 'aeiou'.indexOf(lw.charAt(0)) >= 0 ? 'an' : 'a';
   }
 
   // The article immediately before offset i, or null.
@@ -384,8 +421,10 @@
         }
         if (head !== null) {
           have = text.slice(art.s, art.e).toLowerCase();
-          want = wantsAn(head) ? 'an' : 'a';
-          if (want !== have) {
+          want = articleFor(head);
+          // null is "no idea how that is said aloud", and the article the
+          // author chose is better evidence than a guess: leave it exactly.
+          if (want !== null && want !== have) {
             fixed = matchCapital(text.slice(art.s, art.e), want);
             var repl = fixed + text.slice(art.e, f.start) + f.replacement;
             // The mechanical span now opens at the article, so the readable one
