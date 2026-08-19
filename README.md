@@ -14,26 +14,26 @@ critique 1, draft 1, critique 2, draft 2, critique 3, draft 3. Each finding name
 the exact span it is about, says in one sentence what is wrong, and either shows the replacement it
 proposes or marks itself a pointer the loop will not auto-apply. Six of the twelve rules only point:
 where a rewrite would change the meaning or the grammar, the critic says so instead of guessing.
-Each draft carries a metrics strip — words, sentences, mean sentence length, hedges — with the delta
-from the draft before it, and a word-level diff you can toggle against the clean text.
+Each draft carries a metrics strip — edits applied, words, sentences, hedges, and mean sentence
+length when a draft has more than one sentence — with the delta from the draft before it, and a
+word-level diff you can toggle against the clean text.
 
 The default engine is a deterministic rule-based critic that runs in the page: twelve rules across
 three lenses — clarity, then concreteness, then economy, one per pass. No model, no network, no key.
 The same paragraph produces the same critique every time. **The loop stops early when a pass finds
 nothing and every lens it has not yet run also finds nothing** — the bundled "already clean" sample
-does this on pass 1, and the page says so in the sentence it ends on: *"The loop stopped early after
-1 pass: that pass found nothing, and neither did the lenses it still had to run."* Three outcomes get
-three different sentences — stopped early, ran the full three passes and found nothing left, ran the
-full three passes with findings outstanding — and the status line, the result panel and the exported
-transcript print the same one. That early stop is the behaviour a static diagram of this pattern
-cannot show.
+does this on pass 1, and the page ends on the sentence *"The draft came out clean after 1 pass, with
+2 passes to spare."* Four outcomes get four different sentences: clean with passes to spare, clean on
+the last pass, still needing work with no passes left, and — live mode only — no reply the page could
+read as edits. The status line, the result panel and the exported transcript always print the same
+one. That early stop is the behaviour a static diagram of this pattern cannot show.
 
 Live mode swaps in a real model if you paste an Anthropic API key: the same three lenses become
 system prompts and the findings flow through the same render path, quotes located in the draft the
 same way. The key is read from the field on each run, sent only to `api.anthropic.com`, stored
 nowhere, and never written into the exported transcript.
 
-`tests.html` is the engine's own suite: 963 assertions, run it by opening the file.
+`tests.html` is the engine's own suite: 1,265 assertions, run it by opening the file.
 
 Limits worth knowing. Four of these the page announces at the moment they apply: text over 6,000
 characters is critiqued in chunks, so a finding never spans a chunk boundary and a few long sentences
