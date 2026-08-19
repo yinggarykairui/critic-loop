@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>critic-loop — draft, critique, revise</title>
 <meta name="description" content="A one-page demo of the draft to critique to revise loop. Every intermediate state is shown.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%238f3405'/%3E%3Cpath d='M4 5h8M4 8h8M4 11h5' stroke='%23fff' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -14,11 +15,10 @@
 
   <header class="masthead">
     <h1>critic-loop</h1>
-    <p class="lede">Paste a paragraph. A critic reads it, says what is wrong and where, and the
-      paragraph is rewritten. Three passes, every intermediate state shown.</p>
+    <p class="lede">Paste a paragraph. A critic marks what is wrong and where, the paragraph is
+      rewritten, and every intermediate state is shown.</p>
     <p class="honesty">The default engine is <strong>a deterministic rule-based critic running in
-      your browser</strong>. No model, no network, no key. Same paragraph in, same critique out,
-      every time. Live mode below swaps in a real model if you bring your own Anthropic key.</p>
+      your browser</strong> — no model, no network, no key.</p>
   </header>
 
   <main>
@@ -32,6 +32,13 @@
 
     <p class="counter"><span id="counter">0 characters</span></p>
 
+    <div class="run-row">
+      <button type="button" class="btn btn-primary" id="run">Run</button>
+      <button type="button" class="btn" id="stop" disabled hidden>Stop</button>
+      <button type="button" class="btn btn-quiet" id="skip" hidden>Skip animation</button>
+      <span class="status" id="status" role="status" aria-live="polite"></span>
+    </div>
+
     <div class="samples">
       <span class="samples-label" id="samples-h">Samples</span>
       <div class="btn-row" role="group" aria-labelledby="samples-h">
@@ -39,13 +46,6 @@
         <button type="button" class="btn btn-quiet" data-sample="hedged">Over-hedged technical</button>
         <button type="button" class="btn btn-quiet" data-sample="clean">Already clean</button>
       </div>
-    </div>
-
-    <div class="run-row">
-      <button type="button" class="btn btn-primary" id="run">Run</button>
-      <button type="button" class="btn" id="stop" disabled>Stop</button>
-      <button type="button" class="btn btn-quiet" id="skip" hidden>Skip animation</button>
-      <span class="status" id="status" role="status" aria-live="polite"></span>
     </div>
   </section>
 
