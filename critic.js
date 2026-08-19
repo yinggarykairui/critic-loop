@@ -160,6 +160,15 @@
 
   /* ------------------------------------------------------------- edit shape */
 
+  // (rule, quote) is a finding's identity, and it is stable: rule is a fixed
+  // string per rule, and quote is the exact text the rule read, so two runs over
+  // the same words produce the same pair. A caller that critiques a long draft
+  // in chunks can therefore dedupe the counting rules — repetition fires once
+  // per chunk, at most once per word per critique — by that pair alone, and two
+  // findings with the same pair really are the same complaint about the same
+  // word. start/end are not part of the identity: they are offsets into
+  // whichever chunk produced the finding.
+
   // display.quote is what a human is shown, so it never carries the whitespace
   // the mechanical span had to swallow: the panel renders it inside quotation
   // marks, and “Perhaps ” reads as a typo.
@@ -988,11 +997,20 @@
         if (last - list[k] >= REPETITION_WINDOW) continue;
         var count = 0, m;
         for (m = k; m < list.length && list[m] - list[k] < REPETITION_WINDOW; m++) count++;
+        // A finding's identity for deduplication is (rule, quote) — see the note
+        // on finding(). A counting rule fires once per chunk when a long draft
+        // is critiqued in pieces, so the two reports of one word have to carry
+        // the same quote: inside the window, prefer the occurrence spelled in
+        // lower case, so a chunk that happens to open with "Documentation" still
+        // reports "documentation" and merges with the chunk beside it.
         var t = tokens[list[k]];
+        for (m = k; m < list.length && list[m] - list[k] < REPETITION_WINDOW; m++) {
+          if (tokens[list[m]].w === lw) { t = tokens[list[m]]; break; }
+        }
         out.push(finding(text, 'repetition', 'Repeated word', t.s, t.e,
           q(t.w) + ' appears ' + count + ' times inside ' + REPETITION_WINDOW +
           ' words; vary it or cut the sentences that repeat it.', null));
-        return; // one finding per word, at its first qualifying occurrence
+        return; // one finding per word, whatever the count
       }
     });
     return out;

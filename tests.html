@@ -505,8 +505,24 @@
      JSON.stringify(mutFindings), beforeJSON);
   ok('applied count matches the replaceable findings',
      appliedOut.applied === mutFindings.filter(function (f) { return f.replacement !== null; }).length);
-  ok('applyFindings leaves its input string alone',
-     mutText === mutCopy && mutText.length === mutCopy.length);
+  // A JS string cannot be mutated, so comparing the input to a copy of itself
+  // can never fail. What can fail is the list: applyFindings sorts internally,
+  // and sorting the caller's array in place would reorder the findings the page
+  // is about to render, and a second call would then see a different input.
+  var mutOrder = mutFindings.map(function (f) { return f.start; });
+  var mutIdentities = mutFindings.slice();
+  var againOut = C.applyFindings(mutText, mutFindings);
+  eq('the findings array keeps its own order', mutFindings.map(function (f) {
+    return f.start;
+  }), mutOrder);
+  ok('the findings array keeps its own objects, not copies',
+     mutFindings.length === mutIdentities.length && mutFindings.every(function (f, i) {
+       return f === mutIdentities[i];
+     }));
+  eq('a second identical call returns an identical result',
+     JSON.parse(JSON.stringify(againOut)), JSON.parse(JSON.stringify(appliedOut)));
+  eq('and the findings still describe the same spans after both calls',
+     JSON.stringify(mutFindings), beforeJSON);
   ok('the revision is a different string from the input', appliedOut.text !== mutText);
   ok('the findings still quote the untouched input', mutFindings.every(function (f) {
     return mutText.slice(f.start, f.end) === f.quote;
@@ -601,7 +617,8 @@
   ok('metricsBefore and metricsAfter agree on a converged pass',
      JSON.stringify(clean.passes[0].metricsBefore) === JSON.stringify(clean.passes[0].metricsAfter));
 
-  var MESSY = 'The implementation was basically very robust in order to leverage each and every gain.';
+  var MESSY = 'It is important to note that the deployment was basically very slow, and the ' +
+    'team utilised a number of tools in order to speed it up.';
   var messy = C.run(MESSY);
   eq('a draft that never converges runs three passes', messy.passes.length, 3);
   ok('a draft that never converges is not marked converged', messy.converged === false);
@@ -620,14 +637,18 @@
   })());
   eq('finalText is the last pass output', messy.finalText,
      messy.passes[messy.passes.length - 1].after);
-  // Derived by hand, lens by lens, from the input:
-  //   clarity     "robust" -> "solid", "leverage" -> "use"; "implementation" is
-  //               a nominalisation, which points and rewrites nothing
-  //   concreteness"basically" is a hedge and goes
-  //   economy     "in order to" -> "to", "each and every" -> "every",
-  //               "very" before "solid" is an empty intensifier and goes
+  // Written out by hand, lens by lens, and then read back as English — the
+  // expectation is a sentence a person would write, not a transcript of the
+  // engine:
+  //   clarity      "deployment" is a nominalisation, which points and rewrites
+  //                nothing, so this pass changes not one character
+  //   concreteness "basically" is a hedge and goes; "a number of" is a vague
+  //                quantifier, which only points
+  //   economy      "It is important to note that" is filler and goes, handing
+  //                the capital to "the"; "very" before "slow" is an empty
+  //                intensifier and goes; "in order to" -> "to"
   eq('the loop actually shortens this draft', messy.finalText,
-     'The implementation was solid to use every gain.');
+     'The deployment was slow, and the team utilised a number of tools to speed it up.');
   ok('word count falls across the run',
      messy.passes[2].metricsAfter.words < messy.passes[0].metricsBefore.words);
   eq('every pass carries the required keys',
@@ -1340,6 +1361,59 @@
      C.tailClean('The report is somewhat late.', 1).clean === false);
   ok('cappedClean still checks every lens, not just the ones the cap allowed',
      C.run('The report is somewhat late.', { maxPasses: 1 }).cappedClean === false);
+
+  /* ==================================================================== */
+  g('C10 finding identity across chunks');
+  // (rule, quote) is the identity a caller dedupes on when a long draft is
+  // critiqued chunk by chunk. Counting rules fire once per chunk, so the same
+  // word arrives twice; the pair has to be the same both times.
+  var CH_A = 'The scheduler retries the job when the queue stalls. The scheduler writes a ' +
+    'line to the audit log. The scheduler then sleeps until the next tick. ';
+  var CH_B = 'Operators read the scheduler log every morning. The morning report lists ' +
+    'each scheduler retry. Operators file a ticket when the scheduler stalls, and ' +
+    'operators close it once the fault clears.';
+  var WHOLE = CH_A + CH_B;
+  function repIds(findings) {
+    return findings.filter(function (f) { return f.rule === 'repetition'; })
+      .map(function (f) { return f.rule + ' ' + f.quote; }).sort();
+  }
+  function uniq(a) {
+    var seen = {}, out = [];
+    a.forEach(function (k) { if (!seen[k]) { seen[k] = 1; out.push(k); } });
+    return out.sort();
+  }
+  var wholeRep = repIds(C.critique(WHOLE, 'economy').findings);
+  var halfRep = repIds(C.critique(CH_A, 'economy').findings)
+    .concat(repIds(C.critique(CH_B, 'economy', { atTextStart: false }).findings));
+  ok('the whole text reports repetition', wholeRep.length >= 2);
+  eq('deduping the chunks by (rule, quote) gives the whole-text set',
+     uniq(halfRep), uniq(wholeRep));
+  eq('and nothing is lost by the split', uniq(halfRep).length, wholeRep.length);
+  // The duplication this identity exists to undo: "scheduler" qualifies in both
+  // halves, so the chunked run prints it twice and its counts disagree with the
+  // whole-text count.
+  ok('the chunked run really does report one word twice, undeduped',
+     halfRep.length === wholeRep.length + 1 &&
+     halfRep.filter(function (k) { return k === 'repetition scheduler'; }).length === 2);
+  // Case is not part of the identity by accident: a chunk that opens on the
+  // capitalised form still reports the word as the sentences spell it.
+  eq('a chunk that starts on a capital still quotes the lower-case word',
+     repIds(C.critique('Operators read the log. Operators file tickets. ' +
+       'The operators close them.', 'economy').findings), ['repetition operators']);
+  ok('(rule, quote) is stable across repeated critiques',
+     JSON.stringify(repIds(C.critique(WHOLE, 'economy').findings)) ===
+     JSON.stringify(repIds(C.critique(WHOLE, 'economy').findings)));
+  ok('every finding carries a rule and a quote to be identified by',
+     FIXTURES.every(function (fx) {
+       return LENS_IDS.every(function (lens) {
+         return C.critique(fx[1], lens).findings.every(function (f) {
+           return typeof f.rule === 'string' && f.rule.length > 0 &&
+                  typeof f.quote === 'string' && f.quote === fx[1].slice(f.start, f.end);
+         });
+       });
+     }));
+  ok('repetition reports a word at most once per critique',
+     uniq(wholeRep).length === wholeRep.length);
 
   /* ==================================================================== */
   g('performance');
