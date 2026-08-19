@@ -7,10 +7,10 @@
   /* light (measured against the surfaces they sit on) */
   --bg:        #fbfbf9;
   --surface:   #ffffff;
-  --quote:     #f2efe9;
-  --text:      #14161a;   /* 18.11 on surface, 17.48 on bg */
-  --muted:     #53585f;   /*  7.17 on surface,  6.25 on quote */
-  --border:    #7d828a;   /*  3.87 on surface,  3.37 on quote */
+  --quote:     #e1dacb;   /*  1.39 against surface — the critique panels step away from the drafts */
+  --text:      #14161a;   /* 18.11 on surface, 13.52 on quote */
+  --muted:     #53585f;   /*  7.17 on surface,  5.15 on quote */
+  --border:    #6f747c;   /*  4.70 on surface,  3.38 on quote */
   --accent:    #8f3405;   /*  7.89 on surface */
   --on-accent: #ffffff;   /*  7.89 on accent */
   --del:       #8a2a2a;   /*  8.59 on surface */
@@ -28,10 +28,10 @@
   :root {
     --bg:        #0f1114;
     --surface:   #171a1f;
-    --quote:     #22262c;
-    --text:      #e9eaec;  /* 14.49 on surface, 15.71 on bg */
-    --muted:     #a7adb5;  /*  7.71 on surface,  6.72 on quote */
-    --border:    #6b727b;  /*  3.59 on surface,  3.13 on quote */
+    --quote:     #2e343c;  /*  1.39 against surface */
+    --text:      #e9eaec;  /* 14.49 on surface, 10.43 on quote */
+    --muted:     #a7adb5;  /*  7.71 on surface,  5.55 on quote */
+    --border:    #7b838d;  /*  4.55 on surface,  3.27 on quote */
     --accent:    #ff9a52;  /*  8.30 on surface */
     --on-accent: #0f1114;  /*  9.00 on accent */
     --del:       #ff9d9d;  /*  8.77 on surface */
@@ -159,6 +159,7 @@ textarea { resize: vertical; min-height: 7.5rem; }
   font: inherit;
   font-size: 0.9rem;
   line-height: 1.2;
+  min-height: 44px;          /* tap target */
   padding: 0.5rem 0.8rem;
   color: var(--text);
   background: var(--surface);
@@ -175,6 +176,15 @@ textarea { resize: vertical; min-height: 7.5rem; }
   font-weight: 600;
 }
 .btn-primary:hover:not(:disabled) { color: var(--on-accent); }
+/* Run stays the filled accent while it runs: the page's one accent element should not
+   vanish exactly when the loop is alive. */
+.btn.btn-primary:disabled {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+  border-style: solid;
+  cursor: progress;
+}
 .btn-quiet { background: transparent; }
 .btn:disabled {
   background: var(--disabled-bg);
@@ -239,11 +249,12 @@ textarea { resize: vertical; min-height: 7.5rem; }
 
 .panel-label {
   font-family: var(--mono);
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--muted);
-  margin: 0 0 0.5rem;
+  color: var(--text);
+  margin: 0 0 0.55rem;
   display: block;
 }
 .panel-label .lens { color: var(--accent); }
@@ -285,7 +296,14 @@ textarea { resize: vertical; min-height: 7.5rem; }
 .findings { list-style: none; margin: 0; padding: 0; }
 .finding {
   border-top: 1px solid var(--border);
-  padding: 0.6rem 0 0.1rem;
+  padding: 0.45rem 0 0.1rem;
+}
+/* Closed, a finding is one line of rule name and one line of quote. Open, the quote
+   wraps in full. A pass with more than six findings ships closed. */
+.finding:not([open]) > summary .quote {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .finding:first-child { border-top: 0; padding-top: 0; }
 
@@ -314,10 +332,10 @@ textarea { resize: vertical; min-height: 7.5rem; }
 }
 
 .quote {
-  display: inline-block;
+  display: block;
   max-width: 100%;
-  margin: 0.3rem 0 0 1em;
-  padding: 0.3rem 0.5rem;
+  margin: 0.4rem 0 0 1em;
+  padding: 0.25rem 0.5rem;
   background: var(--surface);
   border-left: 3px solid var(--accent);
   font-family: var(--mono);
@@ -338,6 +356,15 @@ textarea { resize: vertical; min-height: 7.5rem; }
 .repl-text { font-family: var(--mono); color: var(--ins); }
 .repl-none { color: var(--muted); font-style: italic; }
 .repl-empty { color: var(--muted); }
+
+.metrics-head {
+  font-size: 0.82rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0.9rem 0 0;
+}
 
 .pass-summary { font-size: 0.85rem; color: var(--muted); margin: 0.75rem 0 0; }
 
@@ -392,9 +419,17 @@ textarea { resize: vertical; min-height: 7.5rem; }
 /* ---------- narrow ---------- */
 
 @media (max-width: 26rem) {
-  .wrap { padding: 1rem 0.75rem 2rem; }
-  h1 { font-size: 1.35rem; }
+  .wrap { padding: 0.75rem 0.75rem 2rem; }
+  h1 { font-size: 1.25rem; margin-bottom: 0.35rem; }
+  .lede { font-size: 0.92rem; margin-bottom: 0.6rem; }
+  .honesty { font-size: 0.86rem; margin-bottom: 0.85rem; padding-left: 0.6rem; }
+  .masthead { margin-bottom: 0.85rem; }
+  h2 { margin-bottom: 0.5rem; }
+  .card { padding: 0.75rem; margin-bottom: 0.85rem; }
+  textarea { min-height: 5.5rem; }
+  .counter { margin: 0.3rem 0 0.6rem; }
+  .samples { margin: 0.9rem 0 0; }
   .btn { flex: 1 1 auto; }
   .run-row .status { flex: 1 1 100%; }
-  .quote, .finding-body { margin-left: 0; }
+  .quote, .finding-body { margin-left: 0.6rem; }
 }
