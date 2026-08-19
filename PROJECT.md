@@ -42,23 +42,26 @@ so live mode is a swap of one async function rather than a second code path thro
 
 Increment 1 (day 026) — items and states:
 
-- [ ] `critic.js`: clarity lens (long sentence, clause stacking, nominalisation, jargon)
-- [ ] `critic.js`: concreteness lens (hedges, vague quantifiers, adverb+weak verb, passive)
-- [ ] `critic.js`: economy lens (filler phrases, redundant pairs, repetition window)
-- [ ] `critic.js`: `applyFindings` — non-overlapping span replacement, offsets stable
-- [ ] Loop with early convergence and a hard cap of three passes
-- [ ] Transcript render: drafts, critiques, expandable findings, per-draft metrics strip
-- [ ] Word-level diff between consecutive drafts
-- [ ] Live mode: key field, model picker, streamed run, error surfaced in the API's own words
-- [ ] Copy final draft · export transcript as Markdown
-- [ ] `tests.html` green, every rule covered both ways
-- [ ] 320px layout, garbage-input survival, XSS-safe rendering
-- [ ] README true against the built page, measured last
+- [x] `critic.js`: clarity lens (long sentence, clause stacking, nominalisation, jargon)
+- [x] `critic.js`: concreteness lens (hedges, vague quantifiers, adverb+weak verb, passive)
+- [x] `critic.js`: economy lens (filler phrases, redundant pairs, repetition window)
+- [x] `critic.js`: `applyFindings` — non-overlapping span replacement, offsets stable
+- [x] Loop with early convergence and a hard cap of three passes
+- [x] Transcript render: drafts, critiques, expandable findings, per-draft metrics strip
+- [x] Word-level diff between consecutive drafts
+- [x] Live mode: key field, model picker, run per lens, error surfaced in the API's own words
+- [x] Copy final draft · export transcript as Markdown
+- [x] `tests.html` green, every rule covered both ways
+- [x] 320px layout, garbage-input survival, XSS-safe rendering
+- [x] README true against the built page, measured last
 
 ## Open threads
 
 - Live mode needs `anthropic-dangerous-direct-browser-access`; if Anthropic ever withdraws that
   header the live path dies and the offline path does not. That asymmetry is why offline is the
   default rather than the fallback.
-- The offline lenses are English-only and say so. A non-English paragraph converges immediately,
-  which is honest but looks like a bug; the page names the reason when it happens.
+- The offline lenses are English-only. There is no language detection: a non-English paragraph gets
+  whatever the rules happen to match. The textarea's placeholder says the lenses only know English;
+  nothing stronger is claimed, because nothing stronger is measured.
+- Live mode issues a plain non-streaming `fetch` per lens. Streaming was specced and cut: it buys
+  nothing when the response is a JSON findings array that must be parsed whole.
