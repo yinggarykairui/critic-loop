@@ -36,7 +36,10 @@
     aborter: null,
     runToken: 0,
     finalText: '',
-    transcript: null
+    transcript: null,
+    followTail: true,      /* is the newest panel still what the reader is watching? */
+    readerScrolled: false,
+    lastAutoY: 0           /* where the page's own last scroll landed */
   };
 
   var reduceMotion = false;
@@ -99,14 +102,40 @@
     return { text: t.slice(0, limit), truncated: true, total: t.length };
   }
 
-  /* ---------- keeping the loop on screen ---------- */
+  /* ---------- keeping the loop on screen ----------
+     The transcript sits below the fold, so a run that is not scrolled to plays where
+     nobody can see it. The page follows the newest panel only while the reader is still
+     at the tail. The first scroll that leaves the newest panel off screen ends the
+     following for the rest of that run: nothing drags the reader back. Scrolling is
+     instant, never animated, so it does not fight reduced motion.
 
-  /* The transcript sits below the fold, so a run that is not scrolled to plays where
-     nobody can see it. Instant scrolling only: no animation to fight reduced motion. */
-  function scrollTo(node, align) {
-    if (!node || typeof node.scrollIntoView !== 'function') return;
-    try { node.scrollIntoView({ block: align || 'nearest', inline: 'nearest' }); }
-    catch (e) { try { node.scrollIntoView(); } catch (e2) { /* nothing else to try */ } }
+     Scrolls the page makes itself record where they landed, so the scroll listener can
+     tell the page's own scrolling from the reader's and never mistake one for the other. */
+
+  var TAIL_MARGIN = 12;   /* px of viewport kept above the newest panel */
+
+  function scrollNow() {
+    return window.pageYOffset ||
+      (document.documentElement && document.documentElement.scrollTop) || 0;
+  }
+
+  function pageScrollBy(delta) {
+    try { window.scrollBy(0, delta); } catch (e) { /* nothing else to try */ }
+    state.lastAutoY = scrollNow();
+  }
+
+  /* Puts the node's top TAIL_MARGIN below the top of the viewport, or leaves the page
+     alone when the node already sits fully inside it. The top is never pushed above the
+     margin, so the newest panel is never clipped by the top edge. */
+  function scrollIntoTail(node) {
+    if (!node || typeof node.getBoundingClientRect !== 'function') return;
+    var vh = window.innerHeight || 800;
+    var r = node.getBoundingClientRect();
+    var floor = vh - TAIL_MARGIN;
+    var delta = 0;
+    if (r.height >= floor - TAIL_MARGIN || r.top < TAIL_MARGIN) delta = r.top - TAIL_MARGIN;
+    else if (r.bottom > floor) delta = Math.min(r.top - TAIL_MARGIN, r.bottom - floor);
+    if (Math.abs(delta) > 1) pageScrollBy(delta);
   }
 
   /* Focus without scrolling: moving focus back to Run at the end of a run must not
@@ -117,13 +146,37 @@
   }
 
   function keepInView(node) {
-    var tall = false;
-    try {
-      var h = node.getBoundingClientRect().height;
-      tall = h > (window.innerHeight || 800) * 0.8;
-    } catch (e) { tall = false; }
-    scrollTo(node, tall ? 'start' : 'nearest');
+    if (!state.followTail) return;
+    scrollIntoTail(node);
   }
+
+  /* A scroll the page did not make. Following continues only while the newest panel is
+     still whole on the screen — that is the one case where the reader is plainly watching
+     the tail and moving with it. Anything else, up or down, part of a panel or none of it,
+     is a reader reading something else, and this run stops following for good. */
+  function readerMoved() {
+    if (!state.running || !state.followTail) return;
+    var last = els.transcript.lastElementChild;
+    if (!last) return;
+    var vh = window.innerHeight || 800;
+    var r = last.getBoundingClientRect();
+    if (!(r.top >= 0 && r.bottom <= vh)) state.followTail = false;
+  }
+
+  function noteReaderIntent() { if (state.running) state.readerScrolled = true; }
+
+  window.addEventListener('scroll', function () {
+    if (!state.readerScrolled && Math.abs(scrollNow() - state.lastAutoY) <= 1) return;
+    state.readerScrolled = false;
+    readerMoved();
+  }, false);
+  window.addEventListener('wheel', noteReaderIntent, { passive: true });
+  window.addEventListener('touchmove', noteReaderIntent, { passive: true });
+  window.addEventListener('keydown', function (e) {
+    var k = e && e.key;
+    if (k === 'ArrowUp' || k === 'ArrowDown' || k === 'PageUp' || k === 'PageDown' ||
+      k === 'Home' || k === 'End' || k === ' ' || k === 'Spacebar') noteReaderIntent();
+  }, true);
 
   /* ---------- engine presence ---------- */
 
@@ -1016,7 +1069,9 @@
     state.aborter = (typeof AbortController === 'function') ? new AbortController() : null;
     setBusy(true);
     setStatus(live ? 'Running — calling the API.' : 'Running the offline critic.', 'busy');
-    scrollTo(els.section, 'start');
+    state.followTail = true;
+    state.readerScrolled = false;
+    scrollIntoTail(els.section);
 
     var t0 = now();
     var alive = function () {
