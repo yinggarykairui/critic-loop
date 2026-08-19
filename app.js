@@ -228,23 +228,31 @@
      the Result panel and the exported Markdown all print the string it returns, so the
      three cannot disagree by a single byte. */
 
+  function unparsedPasses(rec) {
+    var n = 0;
+    for (var i = 0; i < rec.passes.length; i++) if (rec.passes[i].unparsed !== undefined) n++;
+    return n;
+  }
+
   function verdictLine(rec) {
-    var n = rec.passes.length;
     return CL.verdict({
-      passesRun: n,
-      /* converged is the early stop, and a run that spent the cap did not stop early —
-         whatever a lookahead over an empty range said on its last pass. Reaching the cap
-         with a clean draft is the other outcome, and cappedClean is what names it. */
-      converged: !!rec.converged && n < MAX_PASSES,
-      cappedClean: !!rec.cappedClean
+      passesRun: rec.passes.length,
+      /* Stopping early is a claim about the cap, so the cap goes with it and the engine
+         decides: the page does not second-guess a lookahead by subtracting passes here. */
+      maxPasses: MAX_PASSES,
+      converged: !!rec.converged,
+      cappedClean: !!rec.cappedClean,
+      /* A run whose replies could not be read at all is its own outcome, and the engine
+         has the sentence for it. */
+      unparsed: unparsedPasses(rec)
     });
   }
 
-  /* The line under the verdict explains the machine, and never restates the outcome. */
+  /* The line under the verdict explains the machine, and never restates the outcome —
+     including when every reply was unreadable, which is the verdict's own fourth sentence. */
   function verdictNote(rec) {
-    var unparsed = 0;
-    for (var i = 0; i < rec.passes.length; i++) if (rec.passes[i].unparsed !== undefined) unparsed++;
-    if (unparsed > 0) {
+    var unparsed = unparsedPasses(rec);
+    if (unparsed > 0 && unparsed < rec.passes.length) {
       return 'An unparseable reply is not a pass that found nothing. ' + count(unparsed) +
         ' of ' + count(rec.passes.length) + ' replies could not be read as findings.';
     }
@@ -874,10 +882,22 @@
   /* ---------- chunking ----------
      Some of the engine's work is superlinear in the length of one string, so long text is
      critiqued chunk by chunk with the frame handed back between chunks. Chunks are cut at a
-     sentence end where there is one and at whitespace otherwise, never mid-token, and every
-     chunk after the first is critiqued with atTextStart:false so offset 0 is not read as the
-     start of a sentence. Metrics are never chunked: metrics() is O(n) and runs on the whole
-     draft. Nothing is dropped, but a finding never spans a chunk boundary. */
+     sentence end where there is one and at whitespace otherwise, never mid-token. Every
+     chunk is critiqued with opts.before — the text that actually precedes it, the last
+     BEFORE_CHARS characters of the draft up to the cut — so the engine decides for itself
+     whether offset 0 begins a sentence. It usually does, because the cuts are made at
+     sentence ends: the boolean this replaced asserted the opposite and deleted capitals
+     that belonged there, which is why a chunked draft could read "ecosystem. the
+     implementation" where the unchunked engine reads "ecosystem. The implementation".
+     Metrics are never chunked: metrics() is O(n) and runs on the whole draft. Nothing is
+     dropped, but a finding never spans a chunk boundary. */
+
+  var BEFORE_CHARS = 40;   /* how much of the preceding text each chunk is critiqued with */
+
+  function precedingText(text, start) {
+    if (!(start > 0)) return '';
+    return text.slice(Math.max(0, start - BEFORE_CHARS), start);
+  }
 
   function now() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
 
@@ -957,7 +977,7 @@
       while (i < chunks.length) {
         if (!alive()) return Promise.resolve(null);
         var ch = chunks[i++];
-        var res = CL.critique(ch.text, lensId, { atTextStart: ch.start === 0 });
+        var res = CL.critique(ch.text, lensId, { before: precedingText(text, ch.start) });
         var fs = res.findings || [];
         var ap = CL.applyFindings(ch.text, fs);
         parts.push(ap.text);
@@ -1194,7 +1214,9 @@
         record.chunks = n;
         renderNote('This text is ' + count(raw.length) + ' characters, so each pass critiques it in ' +
           count(n) + ' chunks of about ' + count(CHUNK_TARGET) + ' characters, cut at a sentence ' +
-          'end where there is one and at whitespace otherwise, never mid-word. ' +
+          'end where there is one and at whitespace otherwise, never mid-word. Each chunk is ' +
+          'critiqued with the text that comes before it, so a sentence that starts a chunk is ' +
+          'still read as the start of a sentence. ' +
           'The page hands control back to the browser between chunks, so it stays usable. Metrics are ' +
           'measured on the whole draft, not summed over chunks. The rules that count how often a ' +
           'word comes back report it once per draft, not once per chunk, so a chunked draft counts ' +
