@@ -611,6 +611,12 @@ textarea.is-locked { background: var(--disabled-bg); cursor: default; }
      width. The rule name may shrink and clip here, because at this width it must. */
   .finding:not([open]) > summary { flex-wrap: wrap; }
   .finding:not([open]) > summary .rule-name { flex: 0 1 auto; min-width: 0; }
+  /* The name wraps here instead of clipping. At 320 px it fits on one line and this
+     changes nothing; at 320 px with 200 % text zoom the line holds 204 px of a name that
+     wants 231, and half of EMPTY INTENSIFIER is not a shorter label, it is a different
+     complaint. It costs a second line only on the rows that would otherwise lose letters,
+     and the quote below it keeps the full width it was given. */
+  .rule-name { white-space: normal; overflow-wrap: anywhere; }
   .finding:not([open]) > summary .quote {
     flex: 1 1 100%;
     margin: 0.15rem 0 0 0.6rem;
