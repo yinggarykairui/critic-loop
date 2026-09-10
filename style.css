@@ -409,6 +409,29 @@ textarea.is-locked { background: var(--disabled-bg); cursor: default; }
   text-overflow: ellipsis;
 }
 
+/* A pointer-only finding is marked in its summary row rather than in a sentence in its
+   body. The type is the rule name's — mono, small, uppercase, --muted — with a --border
+   outline so the two do not read as one label. It never wraps and never shrinks: the
+   quote beside it is the thing that gives way, and it already clips with an ellipsis. */
+.finding-tag {
+  flex: none;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-family: var(--mono);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 0.3rem;
+  white-space: nowrap;
+}
+.finding[open] > summary .finding-tag {
+  display: inline-block;
+  vertical-align: 1px;
+  margin-left: 0.35rem;
+}
+
 .quote {
   display: block;
   max-width: 100%;

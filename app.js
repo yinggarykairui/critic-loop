@@ -511,6 +511,13 @@
     addTranscript(p);
   }
 
+  /* The two kinds of finding applyFindings never touches are a pointer (no replacement at
+     all) and, in live mode, a quote the page could not place in this draft. Everything
+     else is applicable: the loop will rewrite it. */
+  function isApplicable(f) {
+    return !!f && f.replacement !== null && f.replacement !== undefined && f.located !== false;
+  }
+
   /* A finding may carry display.quote / display.replacement: the text to show when the
      mechanical span picked up a neighbouring character. What is applied is always
      f.replacement — display is for reading only. */
@@ -523,6 +530,13 @@
 
     var s = document.createElement('summary');
     s.appendChild(el('span', 'rule-name', String(f.ruleName || f.rule || 'Finding')));
+    /* A pointer says so in the summary row, in two words, once. It used to say it in a
+       sentence in the body — six of them in the first pass of the Bloated corporate
+       sample, which is most of why that panel stood four times the height of the draft it
+       sits above. The pass summary still states the count in prose, once per panel. */
+    if (f.replacement === null || f.replacement === undefined) {
+      s.appendChild(el('span', 'finding-tag', 'pointer only'));
+    }
     var shownQuote = shortenQuoteForDisplay(quoteText, QUOTE_DISPLAY_CHARS);
     s.appendChild(el('span', 'quote', shownQuote.text));
     /* The cap says so in the same shape as the draft and listing caps. It sits under the
@@ -539,21 +553,24 @@
     var body = el('div', 'finding-body');
     body.appendChild(el('p', 'why', String(f.why == null ? '' : f.why)));
 
-    var repl = el('p', 'repl');
-    if (f.replacement === null || f.replacement === undefined) {
-      repl.appendChild(el('span', 'repl-none', 'Pointer only — the loop will not rewrite this one for you.'));
-    } else if (f.located === false) {
-      repl.appendChild(el('span', 'repl-none', f.reason === 'overlap'
-        ? 'That quote is in this draft, but it overlaps a finding earlier in the list, so this one was left alone.'
-        : 'The model quoted text that is not in this draft, so nothing was changed.'));
-    } else {
-      var shownRepl = (disp && disp.replacement !== undefined && disp.replacement !== null)
-        ? String(disp.replacement) : String(f.replacement);
-      repl.appendChild(el('span', 'repl-arrow', '→ '));
-      if (shownRepl === '') repl.appendChild(el('span', 'repl-empty', '(delete it)'));
-      else repl.appendChild(el('span', 'repl-text', shownRepl));
+    /* A pointer carries no replacement line: the tag in the summary row is the whole of
+       it. A quote the page could not place still carries one, because which way it failed
+       is not something a tag says. */
+    if (f.replacement !== null && f.replacement !== undefined) {
+      var repl = el('p', 'repl');
+      if (f.located === false) {
+        repl.appendChild(el('span', 'repl-none', f.reason === 'overlap'
+          ? 'That quote is in this draft, but it overlaps a finding earlier in the list, so this one was left alone.'
+          : 'The model quoted text that is not in this draft, so nothing was changed.'));
+      } else {
+        var shownRepl = (disp && disp.replacement !== undefined && disp.replacement !== null)
+          ? String(disp.replacement) : String(f.replacement);
+        repl.appendChild(el('span', 'repl-arrow', '→ '));
+        if (shownRepl === '') repl.appendChild(el('span', 'repl-empty', '(delete it)'));
+        else repl.appendChild(el('span', 'repl-text', shownRepl));
+      }
+      body.appendChild(repl);
     }
-    body.appendChild(repl);
     d.appendChild(body);
     return d;
   }
@@ -619,10 +636,17 @@
     var list = el('ul', 'findings');
     list.id = 'findings-' + index;
     var shown = Math.min(findings.length, FINDINGS_RENDER_CAP);
-    var openThem = total <= FINDINGS_OPEN_CAP;
+    /* A finding opens by default only when the loop will act on it. A pointer or an
+       unplaced quote has nothing under its summary that the row does not already carry, so
+       it renders closed and stays one row. The cap keeps its meaning over that smaller
+       set: too many applicable findings and none of them auto-open. It is counted over
+       the findings this panel renders, which is the set the flag governs. */
+    var applicable = 0;
+    for (var a = 0; a < shown; a++) if (isApplicable(findings[a])) applicable++;
+    var openThem = applicable <= FINDINGS_OPEN_CAP;
     for (var i = 0; i < shown; i++) {
       var li = el('li');
-      li.appendChild(renderFinding(findings[i], openThem));
+      li.appendChild(renderFinding(findings[i], openThem && isApplicable(findings[i])));
       list.appendChild(li);
     }
     p.appendChild(expandAllControl(list));
