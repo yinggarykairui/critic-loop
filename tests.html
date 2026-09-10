@@ -2491,6 +2491,91 @@
      STRIP_B.indexOf('words 5') >= 0);
   ok('and a lone mean still prints one', STRIP_B.indexOf('mean word (chars) 4.0') >= 0);
 
+  // --- the delta is the difference between the two numbers printed --------
+  // The strip rounds for display at one decimal. It used to round the raw difference
+  // separately, so a mean that crossed a rounding midpoint printed two identical numbers
+  // with a non-zero delta between them: 4.96 and 5.04 both show as 5.0, their difference
+  // shows as 0.1. Reachable on any pasted draft whose mean moves less than 0.05 across a
+  // midpoint; none of the four bundled samples happens to hit it.
+  function metricParts(m, prev) {
+    var out = {};
+    var nodes = P.metricsStrip(m, prev, null).querySelectorAll('.metric');
+    for (var i = 0; i < nodes.length; i++) {
+      var name = nodes[i].querySelector('.metric-name').textContent.replace(/\s+$/, '');
+      var val = nodes[i].querySelector('.metric-val').textContent;
+      var deltaEl = nodes[i].querySelector('.metric-delta');
+      out[name] = { val: val, delta: deltaEl ? deltaEl.textContent.trim() : null };
+    }
+    return out;
+  }
+  // "4.9 → 5.1" or "5.0"; "(−0.3)", "(±0)" or "±0".
+  function readVal(s) {
+    var parts = String(s).split('→');
+    return { before: parseFloat(parts[0]), after: parseFloat(parts[parts.length - 1]) };
+  }
+  function readDelta(s) {
+    var t = String(s).replace(/[()]/g, '').trim();
+    if (t === '±0') return 0;
+    return (t.charAt(0) === '−' ? -1 : 1) * parseFloat(t.slice(1));
+  }
+  function deltasAgree(m, prev) {
+    var parts = metricParts(m, prev), key, bad = [];
+    for (key in parts) {
+      if (!Object.prototype.hasOwnProperty.call(parts, key)) continue;
+      if (key === 'edits applied') continue;
+      var v = readVal(parts[key].val);
+      var d = readDelta(parts[key].delta);
+      var shown = Math.round((v.after - v.before) * 10) / 10;
+      if (shown !== d) bad.push(key + ': ' + parts[key].val + ' ' + parts[key].delta);
+    }
+    return bad;
+  }
+
+  var NEAR = { words: 40, sentences: 2, meanSentenceLength: 20, meanWordLength: 4.96, hedges: 1 };
+  var NEAR_PREV = { words: 40, sentences: 2, meanSentenceLength: 20, meanWordLength: 5.04, hedges: 1 };
+  var NEAR_TEXT = P.metricsStrip(NEAR, NEAR_PREV, null).textContent.replace(/\s+/g, ' ');
+  ok('4.96 against 5.04 no longer prints two 5.0s with a delta between them',
+     NEAR_TEXT.indexOf('mean word (chars) 5.0 → 5.0') === -1);
+  ok('it prints the one number both of them round to, and ±0',
+     NEAR_TEXT.indexOf('mean word (chars) 5.0 (±0)') >= 0);
+  eq('and nothing on that strip disagrees with itself', deltasAgree(NEAR, NEAR_PREV), []);
+  // Mean sentence is the other column that prints a decimal, and it behaves the same way.
+  eq('mean sentence across the same midpoint agrees too',
+     deltasAgree({ words: 40, sentences: 8, meanSentenceLength: 4.96, meanWordLength: 5, hedges: 0 },
+                 { words: 40, sentences: 8, meanSentenceLength: 5.04, meanWordLength: 5, hedges: 0 }), []);
+  // A move that survives rounding still prints as a move.
+  var MOVED = P.metricsStrip({ words: 41, sentences: 2, meanSentenceLength: 20.5,
+                               meanWordLength: 4.94, hedges: 0 },
+                             { words: 40, sentences: 2, meanSentenceLength: 20,
+                               meanWordLength: 5.06, hedges: 2 },
+                             null).textContent.replace(/\s+/g, ' ');
+  ok('a mean that moves by more than a rounding step still says so',
+     MOVED.indexOf('mean word (chars) 5.1 → 4.9 (−0.2)') >= 0);
+  ok('the integer columns are untouched: a word count still steps by one',
+     MOVED.indexOf('words 40 → 41 (+1)') >= 0);
+  ok('and so does a hedge count going down', MOVED.indexOf('hedges 2 → 0 (−2)') >= 0);
+
+  // The invariant, over a sweep: displayed-after minus displayed-before is the displayed
+  // delta, on every column of every strip. Seeded so a failure is reproducible.
+  (function () {
+    var seed = 20260910, i, bad = [], cases = 0;
+    function rnd() { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
+    function mean() { return Math.round(rnd() * 1200) / 100; }   /* 0.00 – 12.00, two decimals */
+    function whole() { return Math.floor(rnd() * 400); }
+    for (i = 0; i < 400; i++) {
+      var a = { words: whole(), sentences: whole(), meanSentenceLength: mean(),
+                meanWordLength: mean(), hedges: whole() };
+      var b = { words: whole(), sentences: whole(), meanSentenceLength: mean(),
+                meanWordLength: mean(), hedges: whole() };
+      cases++;
+      var out = deltasAgree(a, b);
+      if (out.length && bad.length < 4) bad.push(JSON.stringify(out));
+    }
+    eq('over 400 random strips, every delta is the difference of the two numbers shown',
+       bad, []);
+    eq('and that sweep really ran', cases, 400);
+  })();
+
   // --- the verdict's applied count is the whole run ----------------------
   var REC3 = { passes: [{ applied: 3 }, { applied: 1 }, { applied: 10 }] };
   eq('applied is summed over every pass, not read off the last one',

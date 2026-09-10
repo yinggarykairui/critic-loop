@@ -103,6 +103,17 @@
     return (Math.round(n * 10) / 10).toFixed(1);
   }
 
+  /* Both column formats print one decimal, so a value is snapped to one decimal before
+     anything is done with it. The strip used to round the two values for display and round
+     their raw difference separately, which is how "mean word (chars) 5.0 → 5.0 (−0.1)" got
+     printed: 4.96 and 5.04 each show as 5.0, and 0.08 shows as 0.1. Subtracting the shown
+     numbers instead makes the delta agree with the two numbers it sits between, on every
+     column — the integer columns are unmoved by it, their values already being whole. */
+  function snap1(n) {
+    if (typeof n !== 'number' || !isFinite(n)) return 0;
+    return Math.round(n * 10) / 10;
+  }
+
   function signed(d, fmt) {
     if (d === 0) return '±0';
     return (d > 0 ? '+' : '−') + (fmt || num)(Math.abs(d));
@@ -348,14 +359,15 @@
     for (var i = 0; i < METRIC_ROWS.length; i++) {
       var row = METRIC_ROWS[i];
       if (row.key === 'meanSentenceLength' && drop) continue;
-      var cur = m && typeof m[row.key] === 'number' ? m[row.key] : 0;
+      var cur = snap1(m && typeof m[row.key] === 'number' ? m[row.key] : 0);
+      var was = (prev && typeof prev[row.key] === 'number') ? snap1(prev[row.key]) : null;
       var fmt = row.mean ? num1 : num;
       var item = el('span', 'metric');
       item.appendChild(el('span', 'metric-name', row.label + ' '));
-      if (prev && typeof prev[row.key] === 'number' && prev[row.key] !== cur) {
-        item.appendChild(el('span', 'metric-val', fmt(prev[row.key]) + ' → ' + fmt(cur)));
+      if (was !== null && was !== cur) {
+        item.appendChild(el('span', 'metric-val', fmt(was) + ' → ' + fmt(cur)));
         item.appendChild(document.createTextNode(' '));
-        item.appendChild(el('span', 'metric-delta', '(' + signed(cur - prev[row.key], fmt) + ')'));
+        item.appendChild(el('span', 'metric-delta', '(' + signed(cur - was, fmt) + ')'));
       } else {
         item.appendChild(el('span', 'metric-val', fmt(cur)));
         if (prev) item.appendChild(el('span', 'metric-delta', ' (±0)'));
