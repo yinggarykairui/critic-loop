@@ -1997,7 +1997,45 @@
   // about where the engine is allowed to see. It is asserted here rather than
   // copied here: the copy below is the *old* function, kept as a control, and the
   // control has to fail before the fixed result means anything.
-  var SC = window.CriticLoopPage.splitChunks;
+  // Every call the suite makes to splitChunks goes through a budget. The `ws > i` half of
+  // the article guard below is what makes the splitter advance at all on a text that is
+  // nothing but articles: without it the cut walks back onto the chunk's own first
+  // character, the chunk comes out empty, i never moves, and the loop runs until the
+  // renderer runs out of memory — tests.html never fires load and prints nothing at all,
+  // not even the assertions that had already passed. A hang is not a red assertion, it is
+  // a green that never arrives. So the string handed to splitChunks here is a stand-in
+  // that counts the slices taken and throws once the count passes what any correct split
+  // of that many characters could need; the throw is caught, recorded as a failure by
+  // name, and a shape that fails every invariant below is returned in its place. A
+  // splitter that stops advancing goes red in a second instead of hanging the page.
+  var SC_RAW = window.CriticLoopPage.splitChunks;
+  var scOverruns = 0;
+  function budgetedText(s) {
+    var budget = 4 * s.length + 64, used = 0;
+    return {
+      length: s.length,
+      charAt: function (i) { return s.charAt(i); },
+      slice: function (a, b) {
+        if (++used > budget) {
+          throw new Error('over ' + budget + ' slices on ' + s.length +
+            ' characters — the loop is not advancing');
+        }
+        return s.slice(a, b);
+      }
+    };
+  }
+  function SC(text, target) {
+    // Empty text never enters the loop, and it is the one input splitChunks hands back
+    // whole rather than sliced, so it goes through unwrapped.
+    if (typeof text !== 'string' || text.length === 0) return SC_RAW(text, target);
+    try { return SC_RAW(budgetedText(text), target); }
+    catch (err) {
+      scOverruns++;
+      record('splitChunks advances on ' + JSON.stringify(text.slice(0, 20)) + ' @' + target,
+             false, 'returns chunks', String(err.message));
+      return [{ start: 0, text: '' }];
+    }
+  }
   function isSpaceAt(text, i) { var c = text.charAt(i); return c !== '' && /\s/.test(c); }
   // The shipped splitChunks as it stood at 59a6820, verbatim. It stays here so the
   // control stays real: if it is ever quietly synced to the new one, the "old
@@ -2135,6 +2173,36 @@
   chunkInvariants('nothing but articles', ALL_ARTICLES, 60, false);
   ok('a text of nothing but articles still gets cut into several chunks',
      SC(ALL_ARTICLES, 60).length >= 10);
+  // The guard's intent, pinned directly rather than by the shape of a hang: over a corpus
+  // that includes the all-articles text, at four targets, splitChunks returns, no chunk is
+  // empty, each chunk starts strictly after the one before, and the chunks are the text.
+  function boundedInvariants(label, s, target) {
+    var before = scOverruns;
+    var chunks = SC(s, target), i;
+    var terminated = scOverruns === before;
+    var nonEmpty = true, rising = true, joined = '';
+    for (i = 0; i < chunks.length; i++) {
+      if (chunks[i].text.length === 0) nonEmpty = false;
+      if (i > 0 && !(chunks[i].start > chunks[i - 1].start)) rising = false;
+      joined += chunks[i].text;
+    }
+    var head = label + ' @' + target + ': ';
+    record(head + 'the loop terminates', terminated, 'returns', terminated ? 'returns' : 'ran out of budget');
+    record(head + 'no chunk is empty', nonEmpty, 'none empty', String(nonEmpty));
+    record(head + 'every chunk starts after the one before', rising, 'strictly increasing',
+           String(rising));
+    record(head + 'the chunks rejoin to the text', joined === s, 'identical',
+           joined === s ? 'identical' : 'differs');
+  }
+  [['nothing but articles', ALL_ARTICLES],
+   ['articles two characters apart', 'a a a a a a a a a a a a'],
+   ['nothing but "an"', 'an an an an an an an an'],
+   ['the straddling run-on', STRADDLE],
+   ['one token, no space in it', new Array(401).join('x')],
+   ['prose that ends on an article', buildText(2000, 1) + ' a']
+  ].forEach(function (row) {
+    [2, 3, 7, 60].forEach(function (target) { boundedInvariants(row[0], row[1], target); });
+  });
   ok('and the cut moved back exactly one word, no further', (function () {
     var leg = splitChunksLegacy(ALL_ARTICLES, 60)[0].text;
     var trimmed = leg.replace(/\s+$/, '');
