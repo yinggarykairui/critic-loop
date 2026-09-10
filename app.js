@@ -8,10 +8,11 @@
   var STEP_MS = 250;
   var DRAFT_DISPLAY_CHARS = 6000;    /* panels show this much; copy and export use all of it */
   var FINDINGS_RENDER_CAP = 60;
-  /* A pass with more findings than this renders them closed. A closed finding is one row
-     now, so ten of them are ten rows, not ten boxes: every pass of the three samples but
-     one opens with its why and its replacement on screen, and the one that does not is one
-     press of Expand all away. */
+  /* openFlags opens the first applicable finding of each rule, so this cap counts rules,
+     not findings: a pass whose applicable findings span more than this many rules renders
+     every one of them closed. Ten open boxes is where a panel stops teaching and starts
+     being a wall. No pass of the four samples reaches it — the most any of them opens is
+     three — and a pass that did is one press of Expand all away. */
   var FINDINGS_OPEN_CAP = 10;
   var FINDINGS_KEEP_CAP = 3000;      /* how many finding objects a pass holds on to */
   var DIFF_CHAR_LIMIT = 12000;       /* above this the word diff is skipped, and says so */
@@ -533,6 +534,28 @@
     return !!f && f.replacement !== null && f.replacement !== undefined && f.located !== false;
   }
 
+  /* Which findings in one panel open on their own. The rule: the first applicable finding
+     of a rule opens, every later finding of that same rule renders closed. A panel then
+     carries one worked example per kind of complaint and one row per repeat — six FILLER
+     PHRASE findings used to open six boxes, each with its own quote, why-line and arrow.
+     Pointers and unplaced quotes never open (isApplicable). The cap governs the set that
+     would open, so more than FINDINGS_OPEN_CAP distinct applicable rules opens none of
+     them. Expand all still reaches every finding in the list.
+     Returns one flag per finding, in order. */
+  function openFlags(findings, cap) {
+    var flags = [], seen = {}, distinct = 0, i, k;
+    for (i = 0; i < findings.length; i++) {
+      if (!isApplicable(findings[i])) { flags.push(false); continue; }
+      k = 'rule:' + String(findings[i].rule || findings[i].ruleName || '');
+      if (seen[k]) { flags.push(false); continue; }
+      seen[k] = true;
+      distinct++;
+      flags.push(true);
+    }
+    if (distinct > cap) for (i = 0; i < flags.length; i++) flags[i] = false;
+    return flags;
+  }
+
   /* A finding may carry display.quote / display.replacement: the text to show when the
      mechanical span picked up a neighbouring character. What is applied is always
      f.replacement — display is for reading only. */
@@ -651,17 +674,12 @@
     var list = el('ul', 'findings');
     list.id = 'findings-' + index;
     var shown = Math.min(findings.length, FINDINGS_RENDER_CAP);
-    /* A finding opens by default only when the loop will act on it. A pointer or an
-       unplaced quote has nothing under its summary that the row does not already carry, so
-       it renders closed and stays one row. The cap keeps its meaning over that smaller
-       set: too many applicable findings and none of them auto-open. It is counted over
-       the findings this panel renders, which is the set the flag governs. */
-    var applicable = 0;
-    for (var a = 0; a < shown; a++) if (isApplicable(findings[a])) applicable++;
-    var openThem = applicable <= FINDINGS_OPEN_CAP;
+    /* openFlags decides what opens, over the findings this panel renders — which is the
+       set the flag governs. */
+    var flags = openFlags(findings.slice(0, shown), FINDINGS_OPEN_CAP);
     for (var i = 0; i < shown; i++) {
       var li = el('li');
-      li.appendChild(renderFinding(findings[i], openThem && isApplicable(findings[i])));
+      li.appendChild(renderFinding(findings[i], flags[i]));
       list.appendChild(li);
     }
     p.appendChild(expandAllControl(list));
