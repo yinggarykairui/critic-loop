@@ -997,28 +997,33 @@
     return out;
   }
 
-  /* A reply the page cannot read as JSON is shown as it came back, capped. This was the
-     last cap on the page that did not say it had cut anything: the body simply stopped
-     mid-word. The note is the shape the draft, listing and quote caps already use. */
+  /* Both halves of an error reply go through one cap and one note. api.anthropic.com
+     answers a 401, a 429 or a 500 with JSON carrying an error.message, so that is the
+     path a real key hits; a body this page cannot read as JSON is shown as it came back.
+     Capping only the second left a 606-character message printing in full, which was the
+     one uncapped string the page had left. The note is the shape the draft, listing and
+     quote caps already use. */
   var API_ERROR_CHARS = 300;
 
+  function clipApiError(text) {
+    var body = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
+    if (body.length <= API_ERROR_CHARS) return { msg: body, note: '' };
+    return {
+      msg: body.slice(0, API_ERROR_CHARS),
+      note: ' Showing the first ' + count(API_ERROR_CHARS) + ' of ' + count(body.length) +
+        ' characters of the error body.'
+    };
+  }
+
   function apiErrorMessage(raw, status) {
-    var msg = '', note = '';
+    var msg = '';
     try {
       var v = JSON.parse(raw);
       if (v && v.error && v.error.message) msg = String(v.error.message);
       else if (v && v.message) msg = String(v.message);
     } catch (e) { /* not JSON */ }
-    if (!msg) {
-      var body = String(raw || '').replace(/\s+/g, ' ').trim();
-      msg = body.slice(0, API_ERROR_CHARS);
-      if (body.length > API_ERROR_CHARS) {
-        note = ' Showing the first ' + count(API_ERROR_CHARS) + ' of ' + count(body.length) +
-          ' characters of the error body.';
-      }
-    }
-    if (!msg) msg = 'no message in the reply';
-    return 'HTTP ' + status + ' — ' + msg + note;
+    var clipped = clipApiError(msg || raw);
+    return 'HTTP ' + status + ' — ' + (clipped.msg || 'no message in the reply') + clipped.note;
   }
 
   function liveCritique(text, lens, signal, key, model) {
