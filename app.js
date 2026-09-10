@@ -300,6 +300,10 @@
     { key: 'words', label: 'words' },
     { key: 'sentences', label: 'sentences' },
     { key: 'meanSentenceLength', label: 'mean sentence' },
+    /* Mean word length is the column that moves under a clarity pass: a jargon swap keeps
+       the word count exactly ("utilises" for "uses") and shortens the words. It sits beside
+       mean sentence because the two are read together. */
+    { key: 'meanWordLength', label: 'mean word' },
     { key: 'hedges', label: 'hedges' }
   ];
 

@@ -1202,21 +1202,32 @@
   }
 
   // One left-to-right pass over the characters, no slicing and no regex over an
-  // unbounded span: words and sentences are counted by the same walk, so the
-  // whole function is O(n) with a small constant on any input, punctuated or
-  // not. (The previous version ran a regex per non-space run and rebuilt the
-  // sentence list as an array of substrings.) Counts are byte-identical to
-  // \S+-with-a-letter for words and to splitSentences().length for sentences.
+  // unbounded span: words, sentences and word length are counted by the same
+  // walk, so the whole function is O(n) with a small constant on any input,
+  // punctuated or not. (The previous version ran a regex per non-space run and
+  // rebuilt the sentence list as an array of substrings.) Counts are
+  // byte-identical to \S+-with-a-letter for words and to
+  // splitSentences().length for sentences.
+  //
+  // meanWordLength is the mean number of alphanumeric characters per counted
+  // word, to one decimal. A word is what it has always been here: a run of
+  // non-space characters holding at least one alphanumeric character, ended by
+  // whitespace or by a terminator run that closes a sentence. The characters
+  // that count towards its length are the ones isAlnumChar() accepts — the same
+  // test the word counter uses — so quotes, brackets, hyphens and the sentence's
+  // own full stop add nothing, and "don't" is four. Jargon swaps are word-count
+  // neutral by construction ("utilises" for "uses"), which is why the strip
+  // needed a number that moves when a clarity pass does its work.
   function metrics(text) {
     text = toText(text);
-    var n = text.length, wordCount = 0, sentenceCount = 0;
-    var inWord = false, wordHasAlnum = false, segHasContent = false;
+    var n = text.length, wordCount = 0, sentenceCount = 0, alnumCount = 0;
+    var inWord = false, wordHasAlnum = false, segHasContent = false, wordAlnum = 0;
     var i = 0, j, ch;
     while (i < n) {
       ch = text.charAt(i);
       if (isSpace(ch)) {
-        if (inWord && wordHasAlnum) wordCount++;
-        inWord = false; wordHasAlnum = false;
+        if (inWord && wordHasAlnum) { wordCount++; alnumCount += wordAlnum; }
+        inWord = false; wordHasAlnum = false; wordAlnum = 0;
         i++;
         continue;
       }
@@ -1226,25 +1237,27 @@
         j = i;
         while (j < n && TERMINATORS.indexOf(text.charAt(j)) >= 0) j++;
         if (j >= n || isSpace(text.charAt(j))) {   // this run closes a sentence
-          if (wordHasAlnum) wordCount++;
-          inWord = false; wordHasAlnum = false;
+          if (wordHasAlnum) { wordCount++; alnumCount += wordAlnum; }
+          inWord = false; wordHasAlnum = false; wordAlnum = 0;
           sentenceCount++;
           segHasContent = false;
         }
         i = j;                                     // "e.g." keeps its word going
         continue;
       }
-      if (!wordHasAlnum && isAlnumChar(ch)) wordHasAlnum = true;
+      if (isAlnumChar(ch)) { wordAlnum++; wordHasAlnum = true; }
       i++;
     }
-    if (inWord && wordHasAlnum) wordCount++;
+    if (inWord && wordHasAlnum) { wordCount++; alnumCount += wordAlnum; }
     if (segHasContent) sentenceCount++;
     if (sentenceCount === 0 && wordCount > 0) sentenceCount = 1;
     var mean = sentenceCount === 0 ? 0 : Math.round((wordCount / sentenceCount) * 10) / 10;
+    var meanWord = wordCount === 0 ? 0 : Math.round((alnumCount / wordCount) * 10) / 10;
     return {
       words: wordCount,
       sentences: sentenceCount,
       meanSentenceLength: mean === 0 ? 0 : mean,
+      meanWordLength: meanWord === 0 ? 0 : meanWord,
       hedges: countHedges(text, tokenize(text)),
       chars: text.length
     };

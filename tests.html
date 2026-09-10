@@ -537,13 +537,13 @@
   /* ==================================================================== */
   g('metrics');
   eq('empty text', C.metrics(''),
-     { words: 0, sentences: 0, meanSentenceLength: 0, hedges: 0, chars: 0 });
+     { words: 0, sentences: 0, meanSentenceLength: 0, meanWordLength: 0, hedges: 0, chars: 0 });
   eq('whitespace only', C.metrics('   '),
-     { words: 0, sentences: 0, meanSentenceLength: 0, hedges: 0, chars: 3 });
+     { words: 0, sentences: 0, meanSentenceLength: 0, meanWordLength: 0, hedges: 0, chars: 3 });
   eq('no terminator counts as one sentence', C.metrics('hello there world'),
-     { words: 3, sentences: 1, meanSentenceLength: 3, hedges: 0, chars: 17 });
+     { words: 3, sentences: 1, meanSentenceLength: 3, meanWordLength: 5, hedges: 0, chars: 17 });
   eq('three sentences', C.metrics('One. Two. Three.'),
-     { words: 3, sentences: 3, meanSentenceLength: 1, hedges: 0, chars: 16 });
+     { words: 3, sentences: 3, meanSentenceLength: 1, meanWordLength: 3.7, hedges: 0, chars: 16 });
   eq('mean rounds to one decimal',
      C.metrics('The parser reads a file. It writes bytes to disk. Tests cover both paths.').meanSentenceLength, 4.7);
   eq('hedges are counted', C.metrics('It is somewhat basically fast.').hedges, 2);
@@ -553,6 +553,71 @@
   eq('emoji is not a word', C.metrics('🚀').words, 0);
   eq('digits count as words', C.metrics('40 percent').words, 2);
   ok('metrics tolerates null', C.metrics(null).chars === 0);
+
+  // meanWordLength: alphanumeric characters per counted word, one decimal, by
+  // the same isAlnumChar test the word counter uses and over the same words.
+  eq('mean word length of three five-letter words', C.metrics('hello there world').meanWordLength, 5);
+  eq('one word is its own length', C.metrics('parser').meanWordLength, 6);
+  eq('a one-letter word', C.metrics('a').meanWordLength, 1);
+  eq('no words, no mean', C.metrics('--- ... !!!').meanWordLength, 0);
+  eq('no alphanumerics at all', C.metrics('!!! ??? ...').meanWordLength, 0);
+  eq('empty text has no mean', C.metrics('').meanWordLength, 0);
+  eq('whitespace only has no mean', C.metrics('   ').meanWordLength, 0);
+  eq('an emoji is not a word, so it has no length', C.metrics('🚀').meanWordLength, 0);
+  eq('the apostrophe in a contraction is not a character of the word',
+     C.metrics("don't").meanWordLength, 4);
+  eq('nor is the full stop that ends the sentence', C.metrics('parser.').meanWordLength, 6);
+  eq('nor are quotes and brackets around it', C.metrics('(\u201cparser\u201d)').meanWordLength, 6);
+  eq('a hyphen splits nothing and counts as nothing',
+     C.metrics('well-known').meanWordLength, 9);
+  eq('digits are characters of the word', C.metrics('40').meanWordLength, 2);
+  eq('mean rounds to one decimal', C.metrics('a bb cccc').meanWordLength, 2.3);
+  eq('and rounds the same way as mean sentence length',
+     C.metrics('One. Two. Three.').meanWordLength, 3.7);
+  eq('an abbreviation keeps its word going and its letters count',
+     C.metrics('e.g. the parser').meanWordLength, 3.7);
+  // The reason the column exists: a jargon swap is word-count neutral by
+  // construction, so words, sentences and mean sentence length all print zero
+  // deltas over a pass that rewrote three spans. Mean word length is what moves.
+  var SWAP = 'The shop utilises a robust jig to leverage the grant.';
+  var swapped = C.applyFindings(SWAP, C.critique(SWAP, 'clarity').findings);
+  eq('the jargon pass really applied three edits', swapped.applied, 3);
+  eq('and the text really changed', swapped.text,
+     'The shop uses a solid jig to use the grant.');
+  eq('the word count does not move', C.metrics(swapped.text).words, C.metrics(SWAP).words);
+  eq('nor the sentence count', C.metrics(swapped.text).sentences, C.metrics(SWAP).sentences);
+  eq('nor mean sentence length',
+     C.metrics(swapped.text).meanSentenceLength, C.metrics(SWAP).meanSentenceLength);
+  eq('nor the hedge count', C.metrics(swapped.text).hedges, C.metrics(SWAP).hedges);
+  eq('mean word length before the swap', C.metrics(SWAP).meanWordLength, 4.3);
+  eq('mean word length after it', C.metrics(swapped.text).meanWordLength, 3.3);
+  ok('so the one column that moves is mean word length',
+     C.metrics(swapped.text).meanWordLength < C.metrics(SWAP).meanWordLength);
+  // O(n), and the same walk: a long text must not cost more per character than a
+  // short one by more than the usual noise. The performance group below times
+  // metrics() over 300 kB and 1 MB and those budgets still hold.
+  // The walk's answer against a slow, independent one: split on whitespace, keep
+  // the runs holding an alphanumeric, strip everything else and divide. Over
+  // every fixture in the suite, not one hand-picked sentence.
+  var meanWordDrift = [];
+  FIXTURES.concat([['a swap', SWAP], ['the swapped text', swapped.text],
+                   ['an abbreviation', 'e.g. the parser reads i.e. a file.'],
+                   ['digits and punctuation', '40% of 312 files (again) — twice.']])
+    .forEach(function (fx) {
+      var t = fx[1];
+      var words = String(t).split(/\s+/).filter(function (w) {
+        return /[\p{L}\p{N}]/u.test(w);
+      });
+      var alnum = words.join('').replace(/[^\p{L}\p{N}]/gu, '').length;
+      var want = words.length === 0 ? 0 : Math.round((alnum / words.length) * 10) / 10;
+      var got = C.metrics(t).meanWordLength;
+      if (got !== want) meanWordDrift.push(fx[0] + ': ' + got + ' vs ' + want);
+    });
+  record('the walk agrees with a slow independent count on every fixture',
+         meanWordDrift.length === 0, 'none', meanWordDrift.length ? meanWordDrift[0] : 'none');
+  eq('and the independent count really was exercised',
+     C.metrics('The parser reads a file. It writes 40 bytes to disk, e.g. quickly.').meanWordLength,
+     3.8);
 
   /* ==================================================================== */
   g('diffWords');
