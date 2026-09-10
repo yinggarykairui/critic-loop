@@ -17,9 +17,12 @@ something, which for one increment no sample reached.
 Two engines produce the same transcript shape:
 
 - **Offline critic** (default, no key). Three deterministic lenses — clarity, concreteness,
-  economy — run in the browser over any text. Every finding quotes its exact span, names its
-  rule, and carries the replacement it proposes. The loop **terminates early on a critic that
-  finds nothing** (`converged after N passes`).
+  economy — run in the browser over any text. Every finding quotes its exact span and names
+  its rule, and carries the replacement it proposes where it has one. Six of the twelve
+  rules only point: where a rewrite would change the meaning or the grammar, the critic
+  says so instead of guessing. The loop
+  **terminates early on a critic that finds nothing**, and the verdict says so in the
+  sentence the run earned.
 - **Live** (bring your own Anthropic key). The same three lenses as system prompts, real calls
   to `api.anthropic.com` from the page. Optional; nothing on the page needs it.
 
@@ -82,9 +85,25 @@ Increment 2 (day 047) — items and states:
 - [x] R5 `app.js`: `apiErrorMessage` says it clipped, in the shape the other three caps use.
 - [x] `tests.html` green: 1,265 assertions → 1,405.
 - [x] README re-derived from the built page; every number recomputed.
-- [ ] `screenshot.png` re-shot and its alt text re-derived — left for the shipper. The image
-      predates R1 and R3: it shows three pointer-only findings open with the old sentence in
-      each body, and a metrics strip with no mean-word column.
+- [x] `screenshot.png` re-shot and its alt text re-derived.
+
+### Increment 3 — improvement cycle 1 on the increment-2 defect list
+
+- [x] F1 `app.js`: `openFlags` — the first applicable finding of each rule opens, its
+      repeats render closed. Corporate pass 3: 1,567 px → 927 px at 1200, 1,833 px →
+      1,181 px at 320. Hedged pass 2: 1,570 px → 838 px and 1,834 px → 1,212 px.
+- [x] F2 `style.css`: a closed row's width goes to the quote, not to its labels. The rule
+      name stops clipping at 1200; at 320 the row wraps to two lines and the quote goes
+      29 px → 247 px. 200 % zoom at 320: `scrollWidth` 549 px → 320 px.
+- [x] F3 `screenshot.png` re-shot from the shipped tree, alt text re-derived.
+- [x] F4/F5/F10/F11 docs: the English-only limit is announced by the placeholder, the mean
+      word claim is true of the whole build, `PROJECT.md`'s replacement claim is corrected,
+      and "Almost clean" leads the samples row.
+- [x] F6 `app.js`: a mean keeps its decimal; each mean column names its unit.
+- [x] F7 `Expand all`: measured, not a defect. The label lags the list by less than one
+      animation frame and is correct at every paint. Trace in the sign-off.
+- [x] F8 `app.js`: the JSON `error.message` goes through the same cap as the body.
+- [x] F9 `tests.html`: group C12 kills all ten page-side mutants. 1,405 → 1,458.
 
 ## Open threads
 
@@ -96,9 +115,10 @@ Increment 2 (day 047) — items and states:
   nothing stronger is claimed, because nothing stronger is measured.
 - Live mode issues a plain non-streaming `fetch` per lens. Streaming was specced and cut: it buys
   nothing when the response is a JSON findings array that must be parsed whole.
-- `tests.html` holds its own copy of the fourth sample's text. It cannot read `index.html` off the
-  disk — `file://` refuses the fetch — so the two are kept in step by hand, and a drift in the
-  page's copy would leave the suite green while asserting a paragraph nobody ships. The honest fix
+- `tests.html` holds its own copy of the "Almost clean" sample's text. It cannot read
+  `index.html` off the disk — `file://` refuses the fetch — so the two are kept in step by hand,
+  and a drift in the page's copy would leave the suite green while asserting a paragraph nobody
+  ships. The honest fix
   is a suite that fetches the shipped file and skips out loud on `file://`; that is a shape change
   to the whole harness, not a line, and it is not this increment's.
 - `splitChunks` moves a cut back one word when a chunk would end on an article. One word is all
