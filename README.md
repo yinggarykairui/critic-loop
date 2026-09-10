@@ -44,10 +44,11 @@ system prompts and the findings flow through the same render path, quotes locate
 same way. The key is read from the field on each run, sent only to `api.anthropic.com`, stored
 nowhere, and never written into the exported transcript.
 
-`tests.html` is the suite: 1,458 assertions, run it by opening the file. Most of them are the
+`tests.html` is the suite: 1,604 assertions, run it by opening the file. Most of them are the
 engine's. The rest drive the page's own decisions out of `app.js` rather than a copy of them — which
-findings a panel opens, what the pointer tag says, where a chunk may be cut, what the error-body cap
-does at 300 characters and at 301 — because a copy of a function in a test only ever proves the copy.
+findings a panel opens, what the pointer tag says, where a chunk may be cut, what the metrics strip
+prints, what the error-body cap does at 299, 300 and 301 characters — because a copy of a function
+in a test only ever proves the copy.
 The chunk splitter keeps its old version beside it as a control that has to fail.
 
 Limits worth knowing. Four of these the page announces at the moment they apply: text over 6,000

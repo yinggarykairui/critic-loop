@@ -39,15 +39,21 @@ critic.js    the offline engine. Pure functions, zero DOM, zero globals beyond o
              → revised text. Deterministic: same input, same output, every time.
 app.js       DOM, the run loop, the diff, the live-mode fetch, export
 tests.html   critic.js's own suite in a page. Every rule gets a case that fires it and a
-             case that must not. It also loads app.js, for the one page function whose
-             behaviour the engine's output depends on — splitChunks — because a copy of a
-             function in a test proves only the copy.
+             case that must not. It also loads app.js and drives the page's own decisions
+             — where a chunk may be cut, which findings open, what the metrics strip
+             prints, what an error body says — because a copy of a function in a test
+             proves only the copy.
 ```
 
 The engine is separated from the page precisely so `tests.html` can drive it without a DOM, and
 so live mode is a swap of one async function rather than a second code path through the UI. app.js
-exposes `window.CriticLoopPage.splitChunks` for the suite and nothing else, and its wiring stands
-down when there is no page around it.
+adds exactly one global, `window.CriticLoopPage`, and it carries twelve keys: `splitChunks`,
+`openFlags`, `isApplicable`, `renderFinding`, `expandAllControl`, `metricsStrip`, `appliedTotal`,
+`verdictLine`, `apiErrorMessage`, `METRIC_ROWS`, `FINDINGS_OPEN_CAP`, `API_ERROR_CHARS`. It was
+one key when this paragraph was written and was widened in the same increment, by the commit that
+made the suite assert the page's decisions instead of only the engine's. `tests.html` asserts that
+exact list, so it cannot widen again unnoticed. Nothing on the page reads the object, and app.js's
+wiring stands down when there is no page around it.
 
 ## Done-map
 
@@ -92,6 +98,9 @@ Increment 2 (day 047) — items and states:
 - [x] F1 `app.js`: `openFlags` — the first applicable finding of each rule opens, its
       repeats render closed. Corporate pass 3: 1,567 px → 927 px at 1200, 1,833 px →
       1,181 px at 320. Hedged pass 2: 1,570 px → 838 px and 1,834 px → 1,212 px.
+      Offline only, as shipped: it keyed on the rule id, and live mode stamps the same id
+      on every finding, so a live panel opened one box however many complaints came back.
+      Closed in increment 4.
 - [x] F2 `style.css`: a closed row's width goes to the quote, not to its labels. The rule
       name stops clipping at 1200; at 320 the row wraps to two lines and the quote goes
       29 px → 247 px. 200 % zoom at 320: `scrollWidth` 549 px → 320 px.
@@ -103,7 +112,34 @@ Increment 2 (day 047) — items and states:
 - [x] F7 `Expand all`: measured, not a defect. The label lags the list by less than one
       animation frame and is correct at every paint. Trace in the sign-off.
 - [x] F8 `app.js`: the JSON `error.message` goes through the same cap as the body.
-- [x] F9 `tests.html`: group C12 kills all ten page-side mutants. 1,405 → 1,458.
+- [x] F9 `tests.html`: group C12 kills nine of the ten page-side mutants by assertion.
+      The tenth — the `ws > i` guard in `splitChunks` — was reported killed and was not:
+      it hung the page at load, which prints nothing at all, not even the assertions that
+      had already passed. Killed by assertion in increment 4. 1,405 → 1,458.
+
+### Increment 4 — improvement cycle 2 on the increment-2 defect list
+
+- [x] G1 `app.js`: `openFlags` keys on the name the row prints, so a live panel opens one
+      box per complaint instead of one box per panel. Offline the two identities are one
+      partition — twelve rule ids, twelve names, one-to-one over a corpus that fires every
+      rule.
+- [x] G2 `tests.html`: every `splitChunks` call in the suite goes through a slice budget,
+      and the article guard's intent is asserted — terminates, no empty chunk, strictly
+      increasing starts, chunks rejoin — over six texts including the all-articles one.
+      Dropping the guard reads 1,570/1,615 in a second instead of killing the renderer.
+- [x] G3 `app.js`: the strip's delta is the difference between the two numbers the row
+      prints. 4.96 against 5.04 printed "5.0 → 5.0 (−0.1)"; it prints "5.0 (±0)".
+- [x] G4/G5 docs: the exported surface is twelve keys and this file says so; the verdict
+      thread says what the README says.
+- [x] G6/G7 `app.js`: the error-body cap counts and cuts on code points, and a JSON
+      `message` that is not a string takes the raw body's path instead of printing
+      `[object Object]`.
+- [x] G8 `tests.html`: the three surviving mutants from the last cycle's own code die —
+      the `rule:` prefix, `num1`'s pre-round, `clipApiError`'s whitespace collapse.
+- [x] G9 `style.css`: the rule name wraps rather than clips at 320 px with 200 % text
+      zoom. 43 names across four samples and four widths, 0 clipped, against 12 before.
+- [x] `tests.html` green: 1,458 assertions → 1,604. Sweep of 20 mutants: 19 killed by
+      assertion, 1 equivalent and recorded as equivalent.
 
 ## Open threads
 
@@ -124,6 +160,14 @@ Increment 2 (day 047) — items and states:
 - `splitChunks` moves a cut back one word when a chunk would end on an article. One word is all
   English needs, but it is not the stated invariant: a text made of nothing but articles keeps its
   cut, because moving back again would produce a chunk that does not advance. The suite asserts
-  that case as it is rather than pretending otherwise.
-- `verdict()`'s cap sentence now has two shapes, so "four outcomes, four sentences" is no longer
-  the whole truth about it — four outcomes, five sentences, and the README says so.
+  that case as it is rather than pretending otherwise, and every call it makes to `splitChunks`
+  goes through a slice budget, so a splitter that stops advancing fails red by name in a second
+  instead of hanging the page. Of the two guards on those lines, `while (ws > i …)` tolerates
+  `>=`: the extra step can only land on `ws = i - 1`, which the next line rejects exactly as it
+  rejects `ws = i`. That mutant is equivalent — 7 texts × 5 targets, 0 differing chunk starts —
+  and equivalent mutants are neither holes nor kills.
+- `verdict()`'s cap sentence has two shapes, so "four outcomes, four sentences" is no longer the
+  whole truth about it: four outcomes get four different sentences, and the third of them — still
+  needing work with no passes left — leads with what landed when the run changed the draft on its
+  way to the cap. The README says exactly that, in those two sentences, and both shapes are on the
+  page: the bundled corporate sample reaches the second.
