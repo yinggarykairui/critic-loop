@@ -137,7 +137,9 @@ Increment 2 (day 047) — items and states:
 - [x] G8 `tests.html`: the three surviving mutants from the last cycle's own code die —
       the `rule:` prefix, `num1`'s pre-round, `clipApiError`'s whitespace collapse.
 - [x] G9 `style.css`: the rule name wraps rather than clips at 320 px with 200 % text
-      zoom. 43 names across four samples and four widths, 0 clipped, against 12 before.
+      zoom. At 320 px zoomed, four samples render 43 names and 0 are clipped; 24 were
+      clipped before (16 in corporate, 8 in hedged). Unzoomed, none clips at any width,
+      before or after.
 - [x] `tests.html` green: 1,458 assertions → 1,604. Sweep of 20 mutants: 19 killed by
       assertion, 1 equivalent and recorded as equivalent.
 
