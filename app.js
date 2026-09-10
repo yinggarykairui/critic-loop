@@ -1045,6 +1045,15 @@
     return c !== '' && /\s/.test(c);
   }
 
+  /* A chunk never ends on an article. repairArticles (critic.js) re-picks a/an from the
+     word that follows the span it rewrites, and it can only see one chunk at a time: with
+     "… a | basically excellent result …" astride the cut, the hedge rule deletes
+     "basically" in the second chunk while the "a" sits at the end of the first, out of
+     reach, and the chunked draft reads "a excellent result" where the whole-text draft
+     reads "an excellent result". So the article travels into the chunk that holds its
+     head. */
+  var ARTICLE_AT_CUT_RE = /^an?$/i;
+
   function splitChunks(text, target) {
     var out = [], i = 0, n = text.length;
     while (i < n) {
@@ -1066,6 +1075,18 @@
           for (j = end; j < limit; j++) { if (isSpaceAt(text, j)) { cut = j + 1; break; } }
         }
         if (cut > i) end = Math.min(cut, n);
+        /* The cut is chosen above; this only ever moves it back, one word, to the first
+           character of a trailing article. Never to or before i — that would be an empty
+           chunk and a loop that does not advance — and never on the last chunk, which has
+           nothing after it to strand. One word is all English needs: the guard wins on a
+           text that is nothing but articles, and that chunk still ends on one. */
+        if (end < n) {
+          var we = end, ws;
+          while (we > i && isSpaceAt(text, we - 1)) we--;
+          ws = we;
+          while (ws > i && !isSpaceAt(text, ws - 1)) ws--;
+          if (ws > i && ARTICLE_AT_CUT_RE.test(text.slice(ws, we))) end = ws;
+        }
       }
       out.push({ start: i, text: text.slice(i, end) });
       i = end;
@@ -1433,7 +1454,17 @@
     });
   }
 
-  /* ---------- wiring ---------- */
+  /* splitChunks decides where a finding can and cannot be seen, so tests.html asserts the
+     real one: a copy of a function in a test only ever proves the copy. This is the whole
+     of what this file exposes, nothing on the page reads it, and the page behaves the same
+     with it as without. */
+  window.CriticLoopPage = { splitChunks: splitChunks };
+
+  /* ---------- wiring ----------
+     Everything below binds to index.html's elements. The suite loads this file with no
+     page around it, for the export above, so the wiring stands down when the page is not
+     there. index.html always has these, so nothing that ships takes this branch. */
+  if (!els.input || !els.run) return;
 
   els.input.addEventListener('input', updateCounter);
 
