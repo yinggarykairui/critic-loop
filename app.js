@@ -88,9 +88,16 @@
     return sleep(STEP_MS);
   }
 
+  /* One rounding rule, in one place: both column formats print at one decimal, and the
+     strip's deltas are taken on the numbers that rule produces. */
+  function snap1(n) {
+    if (typeof n !== 'number' || !isFinite(n)) return 0;
+    return Math.round(n * 10) / 10;
+  }
+
   function num(n) {
     if (typeof n !== 'number' || !isFinite(n)) return '0';
-    return String(Math.round(n * 10) / 10);
+    return String(snap1(n));
   }
 
   function count(n) { return Number(n || 0).toLocaleString('en-US'); }
@@ -100,18 +107,9 @@
      integer count. Counts — words, sentences, hedges — are whole and keep num(). */
   function num1(n) {
     if (typeof n !== 'number' || !isFinite(n)) return '0.0';
-    return (Math.round(n * 10) / 10).toFixed(1);
-  }
-
-  /* Both column formats print one decimal, so a value is snapped to one decimal before
-     anything is done with it. The strip used to round the two values for display and round
-     their raw difference separately, which is how "mean word (chars) 5.0 → 5.0 (−0.1)" got
-     printed: 4.96 and 5.04 each show as 5.0, and 0.08 shows as 0.1. Subtracting the shown
-     numbers instead makes the delta agree with the two numbers it sits between, on every
-     column — the integer columns are unmoved by it, their values already being whole. */
-  function snap1(n) {
-    if (typeof n !== 'number' || !isFinite(n)) return 0;
-    return Math.round(n * 10) / 10;
+    /* toFixed alone is not this rounding: (0.15).toFixed(1) is "0.1", because 0.15 is
+       stored a hair below the midpoint. The strip rounds a half up, everywhere. */
+    return snap1(n).toFixed(1);
   }
 
   function signed(d, fmt) {
@@ -377,15 +375,24 @@
     for (var i = 0; i < METRIC_ROWS.length; i++) {
       var row = METRIC_ROWS[i];
       if (row.key === 'meanSentenceLength' && drop) continue;
-      var cur = snap1(m && typeof m[row.key] === 'number' ? m[row.key] : 0);
+      var cur = m && typeof m[row.key] === 'number' ? m[row.key] : 0;
+      /* The delta is the difference between the two numbers this row prints, not between
+         the two it was handed. The strip used to round each value for display and round
+         their raw difference separately, which is how
+         metricsStrip({…meanWordLength: 4.96}, {…meanWordLength: 5.04}) printed
+         "mean word (chars) 5.0 → 5.0 (−0.1)": both values show as 5.0 and 0.08 shows as
+         0.1. Both formats round at one decimal, so snapping there first and subtracting
+         after leaves the row agreeing with itself. The integer columns are unmoved: their
+         values are whole, and snapping a whole number returns it. */
+      var shown = snap1(cur);
       var was = (prev && typeof prev[row.key] === 'number') ? snap1(prev[row.key]) : null;
       var fmt = row.mean ? num1 : num;
       var item = el('span', 'metric');
       item.appendChild(el('span', 'metric-name', row.label + ' '));
-      if (was !== null && was !== cur) {
+      if (was !== null && was !== shown) {
         item.appendChild(el('span', 'metric-val', fmt(was) + ' → ' + fmt(cur)));
         item.appendChild(document.createTextNode(' '));
-        item.appendChild(el('span', 'metric-delta', '(' + signed(cur - was, fmt) + ')'));
+        item.appendChild(el('span', 'metric-delta', '(' + signed(shown - was, fmt) + ')'));
       } else {
         item.appendChild(el('span', 'metric-val', fmt(cur)));
         if (prev) item.appendChild(el('span', 'metric-delta', ' (±0)'));

@@ -2491,6 +2491,19 @@
      STRIP_B.indexOf('words 5') >= 0);
   ok('and a lone mean still prints one', STRIP_B.indexOf('mean word (chars) 4.0') >= 0);
 
+  // A mean column rounds a half up, which is not what toFixed does on its own: 0.15, 0.35,
+  // 1.15 and 9.95 are all stored a hair under their midpoint, so (0.15).toFixed(1) is
+  // "0.1". The strip rounds the value before it formats it, in one place, and the deltas
+  // are taken on the numbers that rounding produces.
+  [[0.15, '0.2'], [0.35, '0.4'], [1.15, '1.2'], [9.95, '10.0'], [4.96, '5.0'], [5.04, '5.0']]
+    .forEach(function (row) {
+      var txt = stripText({ words: 10, sentences: 2, meanSentenceLength: 5,
+                            meanWordLength: row[0], hedges: 0 }, null);
+      record('a mean of ' + row[0] + ' prints ' + row[1],
+             txt.indexOf('mean word (chars) ' + row[1]) >= 0,
+             'mean word (chars) ' + row[1], txt);
+    });
+
   // --- the delta is the difference between the two numbers printed --------
   // The strip rounds for display at one decimal. It used to round the raw difference
   // separately, so a mean that crossed a rounding midpoint printed two identical numbers
