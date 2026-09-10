@@ -2227,6 +2227,97 @@
      [false, true]);
   eq('nothing opens in an empty panel', P.openFlags([], CAP), []);
 
+  // --- the identity a panel groups on is the identity the row prints -----
+  // openFlags keys on `ruleName || rule`, the expression renderFinding puts in .rule-name.
+  // It used to key on `rule || ruleName`: offline that is the same partition, because the
+  // twelve rule ids and the twelve names are one-to-one (asserted below), but live mode
+  // stamps rule: 'live' on every finding and carries the model's own name in ruleName, so
+  // a whole live panel collapsed onto one key and opened exactly one box however many
+  // distinct complaints came back.
+  function fLive(name) {
+    return { rule: 'live', ruleName: name, replacement: 'x', quote: 'q', why: 'w' };
+  }
+  function rowName(f) {
+    var n = P.renderFinding(f, false).querySelector('.rule-name');
+    return n ? n.textContent : null;
+  }
+  eq('a live panel opens one box per rule name, not one per panel',
+     P.openFlags([fLive('Wordy'), fLive('Hedging'), fLive('Passive')], CAP),
+     [true, true, true]);
+  eq('a live rule name that comes back twice still opens once',
+     P.openFlags([fLive('Wordy'), fLive('Hedging'), fLive('Wordy')], CAP),
+     [true, true, false]);
+  ok('and those are the names the rows print',
+     rowName(fLive('Wordy')) === 'Wordy' && rowName(fApp('jargon')) === 'jargon');
+  var SAME_NAME = [fLive('Wordy'), fLive('Wordy'), fLive('Passive')];
+  eq('two rows printing one name are one worked example and one repeat',
+     P.openFlags(SAME_NAME, CAP), [true, false, true]);
+  ok('the first two rows do print the same name and the third does not',
+     rowName(SAME_NAME[0]) === rowName(SAME_NAME[1]) &&
+     rowName(SAME_NAME[0]) !== rowName(SAME_NAME[2]));
+
+  // The key carries a 'rule:' prefix so a rule named after something on Object.prototype
+  // gets a key of its own. Without it, seen['__proto__'] reads back truthy on an empty
+  // object and the first finding of that rule renders closed.
+  eq('a rule named __proto__, constructor or hasOwnProperty opens like any other',
+     P.openFlags([fLive('__proto__'), fLive('constructor'), fLive('hasOwnProperty'),
+                  fLive('__proto__')], CAP),
+     [true, true, true, false]);
+
+  // Offline, the two identities partition a panel the same way — checked over a corpus
+  // that fires all twelve rules rather than assumed of them.
+  var RULE_NAME_CORPUS = [
+    'The parser reads a file. It writes bytes to disk. Tests cover both paths.',
+    'It is important to note that the implementation was basically very robust, and in ' +
+      'order to leverage each and every gain the team utilised several paradigms.',
+    'The parser reads the file and then it checks each token against the table before it ' +
+      'hands the result to the writer which finally puts the bytes onto the disk in one go.',
+    STACKED,
+    'The cache significantly improves throughput.',
+    'The documentation covers the parser. The documentation is short. The documentation is stale.',
+    'The configuration of the system was performed by the operator, and several files were handled.',
+    'It is very fast and really solid, and the team quickly ran the tests.'
+  ];
+  (function () {
+    var byRule = {}, byName = {}, oneToOne = true, fired = {};
+    RULE_NAME_CORPUS.forEach(function (t) {
+      LENS_IDS.forEach(function (lens) {
+        C.critique(t, lens).findings.forEach(function (f) {
+          fired[f.rule] = true;
+          if (byRule[f.rule] !== undefined && byRule[f.rule] !== f.ruleName) oneToOne = false;
+          if (byName[f.ruleName] !== undefined && byName[f.ruleName] !== f.rule) oneToOne = false;
+          byRule[f.rule] = f.ruleName;
+          byName[f.ruleName] = f.rule;
+        });
+      });
+    });
+    eq('the corpus fires every shipped rule', Object.keys(fired).sort(), ALL_RULES.slice().sort());
+    ok('rule id and printed name are one-to-one over all twelve', oneToOne);
+    eq('twelve names for twelve rules', Object.keys(byName).length, ALL_RULES.length);
+    // So on the offline path the two keyings agree finding for finding.
+    var offline = [];
+    RULE_NAME_CORPUS.forEach(function (t) {
+      LENS_IDS.forEach(function (lens) {
+        C.critique(t, lens).findings.forEach(function (f) { offline.push(f); });
+      });
+    });
+    var byPrinted = P.openFlags(offline, 99);
+    var byId = (function () {
+      var seen = {}, out = [], i, k;
+      for (i = 0; i < offline.length; i++) {
+        if (!P.isApplicable(offline[i])) { out.push(false); continue; }
+        k = 'rule:' + String(offline[i].rule || '');
+        if (seen[k]) { out.push(false); continue; }
+        seen[k] = true;
+        out.push(true);
+      }
+      return out;
+    })();
+    eq('offline, keying on the name opens exactly what keying on the id did',
+       byPrinted, byId);
+    eq('over the 21 findings that corpus produces', offline.length, 21);
+  })();
+
   // The cap counts rules, because rules are what open. Exactly CAP distinct applicable
   // rules is still under it; one more closes every box in the panel.
   function nRules(n) {

@@ -555,12 +555,20 @@
      Pointers and unplaced quotes never open (isApplicable). The cap governs the set that
      would open, so more than FINDINGS_OPEN_CAP distinct applicable rules opens none of
      them. Expand all still reaches every finding in the list.
+     The key is the name the row prints — `ruleName || rule`, the same expression
+     renderFinding puts in .rule-name — because "one worked example per rule" is a claim
+     about what the reader sees. Offline the two are one-to-one over all twelve rules, so
+     either would do; live mode stamps rule: 'live' on every finding and carries the
+     model's own name in ruleName, so keying on `rule` collapsed a whole panel onto one
+     key and opened exactly one box however many distinct complaints came back.
      Returns one flag per finding, in order. */
   function openFlags(findings, cap) {
     var flags = [], seen = {}, distinct = 0, i, k;
     for (i = 0; i < findings.length; i++) {
       if (!isApplicable(findings[i])) { flags.push(false); continue; }
-      k = 'rule:' + String(findings[i].rule || findings[i].ruleName || '');
+      /* The prefix keeps a rule named __proto__, constructor or hasOwnProperty out of
+         Object.prototype, where every one of them reads back truthy on an empty object. */
+      k = 'rule:' + String(findings[i].ruleName || findings[i].rule || '');
       if (seen[k]) { flags.push(false); continue; }
       seen[k] = true;
       distinct++;
