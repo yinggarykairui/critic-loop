@@ -1347,12 +1347,21 @@
   //   converged   - a pass found nothing and nothing was left to find
   //   cappedClean - the cap was spent and the final draft came out clean
   //   unparsed    - passes whose reply could not be read at all (live mode)
+  //   applied     - edits the run applied, summed over every pass; absent, not a
+  //                 number, or not above zero all mean "unknown", and the
+  //                 sentence is then exactly what it was before this existed
   //
   // Stopping early is a claim about the cap, not about the last pass: a run
   // that used every pass it had did not stop early, however clean it ended.
   // That is why the cap is part of the state, and why passing none assumes the
   // default cap rather than assuming the run had passes to spare.
   function passWord(n) { return n === 1 ? '1 pass' : n + ' passes'; }
+  // The page groups every count it prints with en-US separators. This sentence
+  // is printed verbatim by the status line, the Result panel and the exported
+  // transcript, so it groups the same way rather than a second way.
+  function editWord(n) {
+    return n === 1 ? 'One edit' : Number(n).toLocaleString('en-US') + ' edits';
+  }
 
   function verdict(state) {
     var s = state || {};
@@ -1375,8 +1384,15 @@
     if (s.cappedClean) {
       return 'The draft came out clean after ' + passWord(n) + ', with no passes to spare.';
     }
-    return 'The draft still needs work after ' + passWord(n) +
+    // The run that ends here still cut the draft, often heavily — 14 edits and
+    // 75 words down to 51 on the bundled corporate sample — and a bare "still
+    // needs work" calls that a failure. What landed leads; the rest of the
+    // sentence is unchanged, and with nothing to report it is the whole of it.
+    var tail = 'The draft still needs work after ' + passWord(n) +
       (n >= cap ? ', and there are no passes left.' : '.');
+    var applied = (typeof s.applied === 'number' && isFinite(s.applied) && s.applied >= 1)
+      ? Math.floor(s.applied) : 0;
+    return applied > 0 ? editWord(applied) + ' landed. ' + tail : tail;
   }
 
   /* -------------------------------------------------------------------- run */

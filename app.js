@@ -257,6 +257,12 @@
     return n;
   }
 
+  function appliedTotal(rec) {
+    var n = 0;
+    for (var i = 0; i < rec.passes.length; i++) n += rec.passes[i].applied || 0;
+    return n;
+  }
+
   function verdictLine(rec) {
     return CL.verdict({
       passesRun: rec.passes.length,
@@ -267,7 +273,12 @@
       cappedClean: !!rec.cappedClean,
       /* A run whose replies could not be read at all is its own outcome, and the engine
          has the sentence for it. */
-      unparsed: unparsedPasses(rec)
+      unparsed: unparsedPasses(rec),
+      /* A run that reaches the cap with work outstanding has usually still changed the
+         draft, and the sentence says what landed before it says what is left. Summed in
+         this one place, so the status line, the Result panel and the exported Markdown
+         cannot disagree about the number any more than they can about the wording. */
+      applied: appliedTotal(rec)
     });
   }
 
@@ -705,10 +716,9 @@
     draftBody(p, record.finalText);
 
     var mFinal = record.metrics0;
-    var appliedAll = 0;
+    var appliedAll = appliedTotal(record);
     for (var i = 0; i < record.passes.length; i++) {
       if (record.passes[i].metricsAfter) mFinal = record.passes[i].metricsAfter;
-      appliedAll += record.passes[i].applied || 0;
     }
     p.appendChild(el('p', 'metrics-head', 'Draft 0 → final draft'));
     p.appendChild(metricsStrip(mFinal, record.metrics0, 'Draft 0 to final draft', appliedAll));

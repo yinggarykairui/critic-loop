@@ -1667,6 +1667,136 @@
        }));
 
   /* ==================================================================== */
+  g('C8b what landed, when the cap runs out');
+  // A run that reaches the cap with work outstanding has usually still changed
+  // the draft — the bundled corporate sample applies 14 edits and takes 75 words
+  // to 51 — and the sentence used to say only that the draft still needs work.
+  // state.applied leads with what landed. It changes that one branch and nothing
+  // else, and an absent, zero or unreadable count leaves the branch byte-identical
+  // to what it printed before the field existed.
+  function VS(extra) {
+    var base = { passesRun: 3, maxPasses: 3, converged: false, cappedClean: false };
+    if (extra) Object.keys(extra).forEach(function (k) { base[k] = extra[k]; });
+    return C.verdict(base);
+  }
+  var CAP_TAIL = 'The draft still needs work after 3 passes, and there are no passes left.';
+  eq('the cap sentence with nothing to report is unchanged', VS(), CAP_TAIL);
+  eq('fourteen edits lead the sentence', VS({ applied: 14 }), '14 edits landed. ' + CAP_TAIL);
+  eq('one edit is singular and spelled out', VS({ applied: 1 }), 'One edit landed. ' + CAP_TAIL);
+  eq('counts group the way the page groups them', VS({ applied: 1234 }),
+     '1,234 edits landed. ' + CAP_TAIL);
+  eq('and again over a million', VS({ applied: 1234567 }),
+     '1,234,567 edits landed. ' + CAP_TAIL);
+  eq('zero edits is the sentence with nothing added', VS({ applied: 0 }), CAP_TAIL);
+  // Everything that is not a count of at least one edit means "unknown", and
+  // unknown is the old sentence, byte for byte.
+  [undefined, null, 0, -3, 0.4, NaN, Infinity, -Infinity, '14', '', [], {}, true, false]
+    .forEach(function (v, i) {
+      eq('an applied of ' + JSON.stringify(v === undefined ? 'undefined' : v) +
+         ' (#' + i + ') leaves the sentence alone', VS({ applied: v }), CAP_TAIL);
+    });
+  eq('a fractional count is floored, not rounded up', VS({ applied: 2.9 }),
+     '2 edits landed. ' + CAP_TAIL);
+  eq('the under-cap version of the same branch also leads with what landed',
+     C.verdict({ passesRun: 2, maxPasses: 3, converged: false, cappedClean: false, applied: 5 }),
+     '5 edits landed. The draft still needs work after 2 passes.');
+  eq('and is unchanged with nothing to report',
+     C.verdict({ passesRun: 2, maxPasses: 3, converged: false, cappedClean: false }),
+     'The draft still needs work after 2 passes.');
+  // Every other branch is byte-identical whatever applied says. The sweep below
+  // is the same shape as C8's, run twice — once with no applied at all, once with
+  // a large one — and only the "still needs work" branch may differ.
+  var appliedDrift = [], appliedMissed = [];
+  [0, 1, 2, 3].forEach(function (n) {
+    [1, 2, 3].forEach(function (cap) {
+      if (n > cap) return;
+      [false, true].forEach(function (conv) {
+        [false, true].forEach(function (capped) {
+          [0, 1, n].forEach(function (unp) {
+            var st = { passesRun: n, maxPasses: cap, converged: conv,
+                       cappedClean: capped, unparsed: unp };
+            var bare = C.verdict(st);
+            st.applied = 7;
+            var withEdits = C.verdict(st);
+            var tag = n + '/' + cap + '/' + conv + '/' + capped + '/' + unp;
+            var isTail = bare.indexOf('The draft still needs work') === 0;
+            if (!isTail && withEdits !== bare) appliedDrift.push(tag + ': ' + withEdits);
+            if (isTail && withEdits !== '7 edits landed. ' + bare) {
+              appliedMissed.push(tag + ': ' + withEdits);
+            }
+          });
+        });
+      });
+    });
+  });
+  record('no branch but the last one moves when applied is set',
+         appliedDrift.length === 0, 'none', appliedDrift.length ? appliedDrift[0] : 'none');
+  record('and the last one always leads with what landed',
+         appliedMissed.length === 0, 'none', appliedMissed.length ? appliedMissed[0] : 'none');
+  ok('the sweep really covered both kinds of branch',
+     appliedDrift.length === 0 && appliedMissed.length === 0);
+  ok('verdict() carries the new half of the wording',
+     String(C.verdict).indexOf(' landed. ') >= 0);
+  ok('and no other export writes it',
+     ['critique', 'applyFindings', 'metrics', 'diffWords', 'steps', 'run', 'tailClean']
+       .every(function (name) { return String(C[name]).indexOf('landed') < 0; }));
+  // The real run the sentence was written for.
+  var messyApplied = messy.passes.reduce(function (a, p) { return a + p.applied; }, 0);
+  ok('the messy fixture really applies edits and still reaches the cap',
+     messyApplied > 0 && messy.converged === false && messy.passes.length === 3);
+  eq('so its verdict names them',
+     C.verdict({ passesRun: messy.passes.length, maxPasses: messy.maxPasses,
+                 converged: messy.converged, cappedClean: messy.cappedClean,
+                 applied: messyApplied }),
+     messyApplied === 1 ? 'One edit landed. ' + CAP_TAIL
+                        : messyApplied + ' edits landed. ' + CAP_TAIL);
+
+  /* ==================================================================== */
+  g('C8c the bundled samples');
+  // index.html ships four samples. This is a copy of the fourth one's text: the
+  // suite cannot read the page's copy off the disk, so the two are kept in step
+  // by hand and the page harness checks the shipped one at ship time. What the
+  // sample is for is the property below — it converges before the cap, after a
+  // pass that really rewrote something, so the page ends on a sentence with
+  // passes to spare rather than on "there are no passes left".
+  var SAMPLE_ALMOST = 'The repair shop utilises three benches and a robust wheel jig. ' +
+    'Volunteers open it on Tuesday and Saturday evenings. Members pay eight pounds a year, ' +
+    'bring their own parts, and sweep the floor before they leave. The waiting list ran to ' +
+    'forty names in March, so the co-op will leverage a small grant to add a fourth bench in June.';
+  var almost = C.run(SAMPLE_ALMOST, { maxPasses: 3 });
+  var almostApplied = almost.passes.reduce(function (a, p) { return a + p.applied; }, 0);
+  ok('it converges', almost.converged === true);
+  ok('and before the cap', almost.passes.length < 3);
+  eq('two passes, not three', almost.passes.length, 2);
+  ok('at least one pass applied at least one edit',
+     almost.passes.some(function (p) { return p.applied >= 1; }));
+  eq('three edits in the first pass', almost.passes[0].applied, 3);
+  eq('and none in the second', almost.passes[1].applied, 0);
+  eq('so the verdict has passes to spare',
+     C.verdict({ passesRun: almost.passes.length, maxPasses: almost.maxPasses,
+                 converged: almost.converged, cappedClean: almost.cappedClean,
+                 applied: almostApplied }),
+     'The draft came out clean after 2 passes, with 1 pass to spare.');
+  ok('it is not a second Already clean: the first pass found something',
+     C.critique(SAMPLE_ALMOST, 'clarity').findings.length === 3);
+  ok('and the text really changed', almost.finalText !== SAMPLE_ALMOST);
+  eq('the jargon it swaps', C.critique(SAMPLE_ALMOST, 'clarity').findings.map(function (f) {
+    return f.quote + '→' + f.replacement;
+  }), ['utilises→uses', 'robust→solid', 'leverage→use']);
+  ok('the other two lenses find nothing in it',
+     C.critique(SAMPLE_ALMOST, 'concreteness').findings.length === 0 &&
+     C.critique(SAMPLE_ALMOST, 'economy').findings.length === 0);
+  // The other three samples still do what the page says they do.
+  var SAMPLE_CLEAN = 'The build takes 41 seconds. It compiles 312 files, links one binary, ' +
+    'and writes a 4 MB archive. Two tests fail on Windows. Both fail in the path parser. ' +
+    'The fix lands tomorrow.';
+  var cleanRun = C.run(SAMPLE_CLEAN, { maxPasses: 3 });
+  ok('Already clean still converges on pass 1 with nothing applied',
+     cleanRun.converged === true && cleanRun.passes.length === 1 &&
+     cleanRun.passes[0].applied === 0);
+  ok('and the two samples are different texts', SAMPLE_ALMOST !== SAMPLE_CLEAN);
+
+  /* ==================================================================== */
   g('C9 tailClean');
   eq('tailClean returns {clean, results}', Object.keys(C.tailClean(CLEAN, 0)).sort(),
      ['clean', 'results']);
