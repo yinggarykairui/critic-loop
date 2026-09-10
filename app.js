@@ -119,6 +119,24 @@
     return (d > 0 ? '+' : '−') + (fmt || num)(Math.abs(d));
   }
 
+  /* A string's characters as a reader counts them: an astral character is one, not the two
+     UTF-16 units it is stored as. Array.from would do it in one word; this file targets no
+     build step and no polyfill, and the loop is the same thing spelled out. */
+  function codePoints(s) {
+    var out = [], i = 0, c, code;
+    while (i < s.length) {
+      c = s.charAt(i);
+      code = s.charCodeAt(i);
+      if (code >= 0xd800 && code <= 0xdbff && i + 1 < s.length) {
+        var next = s.charCodeAt(i + 1);
+        if (next >= 0xdc00 && next <= 0xdfff) { c = s.slice(i, i + 2); i++; }
+      }
+      out.push(c);
+      i++;
+    }
+    return out;
+  }
+
   function shortenForDisplay(text, limit) {
     var t = String(text == null ? '' : text);
     if (t.length <= limit) return { text: t, truncated: false, total: t.length };
@@ -1025,22 +1043,36 @@
      quote caps already use. */
   var API_ERROR_CHARS = 300;
 
+  /* Both numbers in the note are counted the way a reader counts them: in code points, not
+     in the UTF-16 units a JavaScript string is stored as. An error body of one letter and
+     200 emoji is 401 units and 201 characters on screen, so the old count said "the first
+     300 of 401 characters" about a string a reader counts 201 of — and the cut at unit 300
+     landed inside a surrogate pair, ending the line on half an emoji. Splitting on code
+     points fixes both: the string is cut between characters, and the two numbers are the
+     ones on the page. The collapse of runs of whitespace comes first, so a body that is
+     mostly newlines is not clipped to a column of blanks — it is also what makes the note's
+     count match the single-spaced text beside it. */
   function clipApiError(text) {
     var body = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
-    if (body.length <= API_ERROR_CHARS) return { msg: body, note: '' };
+    var chars = codePoints(body);
+    if (chars.length <= API_ERROR_CHARS) return { msg: body, note: '' };
     return {
-      msg: body.slice(0, API_ERROR_CHARS),
-      note: ' Showing the first ' + count(API_ERROR_CHARS) + ' of ' + count(body.length) +
+      msg: chars.slice(0, API_ERROR_CHARS).join(''),
+      note: ' Showing the first ' + count(API_ERROR_CHARS) + ' of ' + count(chars.length) +
         ' characters of the error body.'
     };
   }
 
+  /* api.anthropic.com answers with { error: { message: "…" } }. A body that is JSON but
+     carries no string there — a missing message, a message that is an object — is no more
+     readable than a body that is not JSON at all, so it takes the same path the raw body
+     takes rather than being stringified into "[object Object]". */
   function apiErrorMessage(raw, status) {
     var msg = '';
     try {
       var v = JSON.parse(raw);
-      if (v && v.error && v.error.message) msg = String(v.error.message);
-      else if (v && v.message) msg = String(v.message);
+      if (v && v.error && typeof v.error.message === 'string') msg = v.error.message;
+      else if (v && typeof v.message === 'string') msg = v.message;
     } catch (e) { /* not JSON */ }
     var clipped = clipApiError(msg || raw);
     return 'HTTP ' + status + ' — ' + (clipped.msg || 'no message in the reply') + clipped.note;

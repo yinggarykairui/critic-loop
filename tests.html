@@ -2610,6 +2610,84 @@
      'HTTP 500 — no message in the reply');
   eq('the cap constant is the one the note quotes', P.API_ERROR_CHARS, 300);
 
+  // --- the cap counts characters the way a reader counts them ------------
+  // The body is clipped on whole code points, and the note's two numbers are code points
+  // too. It used to clip on UTF-16 units: 'A' plus 200 emoji ended on a lone high
+  // surrogate — a replacement glyph on the page — under a note reading "the first 300 of
+  // 401 characters" about a string a reader counts 201 of.
+  var EMOJI = '😀';
+  function cpLength(s) { return Array.from(s).length; }
+  var SHORT_EMOJI = 'A' + new Array(201).join(EMOJI);          /* 201 characters, 401 units */
+  eq('that body is 401 UTF-16 units', SHORT_EMOJI.length, 401);
+  eq('and 201 characters', cpLength(SHORT_EMOJI), 201);
+  eq('so it is under the cap and prints whole, with no note',
+     P.apiErrorMessage(SHORT_EMOJI, 500), 'HTTP 500 — ' + SHORT_EMOJI);
+  var LONG_EMOJI = 'A' + new Array(401).join(EMOJI);           /* 401 characters, 801 units */
+  var LONG_OUT = P.apiErrorMessage(LONG_EMOJI, 500);
+  var LONG_MSG = LONG_OUT.slice('HTTP 500 — '.length, LONG_OUT.indexOf(' Showing the first'));
+  eq('over the cap, exactly 300 characters of it are shown', cpLength(LONG_MSG), 300);
+  eq('cut between characters, never inside one', LONG_MSG, 'A' + new Array(300).join(EMOJI));
+  ok('no lone surrogate survives the cut',
+     !/[\ud800-\udbff](?![\udc00-\udfff])/.test(LONG_MSG) &&
+     !/(^|[^\ud800-\udbff])[\udc00-\udfff]/.test(LONG_MSG));
+  ok('and the note counts characters, not units',
+     LONG_OUT.indexOf(NOTE_HEAD + '401 characters of the error body.') > 0);
+
+  // --- every shape a reply can arrive in ---------------------------------
+  // A JSON body whose message is not a string is no more readable than a body that is not
+  // JSON, so it takes the same path the raw body takes. It used to be stringified:
+  // {"error":{"message":{"a":1}}} printed HTTP 401 — [object Object].
+  var OBJ_MSG = '{"error":{"message":{"a":1}}}';
+  eq('a non-string error.message falls back to the body',
+     P.apiErrorMessage(OBJ_MSG, 401), 'HTTP 401 — ' + OBJ_MSG);
+  ok('and nothing on the page reads [object Object]',
+     P.apiErrorMessage(OBJ_MSG, 401).indexOf('[object Object]') === -1);
+  var NUM_MSG = '{"message":42}';
+  eq('a numeric top-level message does the same',
+     P.apiErrorMessage(NUM_MSG, 500), 'HTTP 500 — ' + NUM_MSG);
+  var NO_MSG = '{"error":{"type":"invalid_request_error"}}';
+  eq('JSON with no message shows the body', P.apiErrorMessage(NO_MSG, 400),
+     'HTTP 400 — ' + NO_MSG);
+  var NO_ERR = '{"ok":true}';
+  eq('JSON with no error shows the body', P.apiErrorMessage(NO_ERR, 500),
+     'HTTP 500 — ' + NO_ERR);
+  var BAD_JSON = '{"error": {"message": "cut off';
+  eq('a body that is not JSON shows as it came back',
+     P.apiErrorMessage(BAD_JSON, 502), 'HTTP 502 — ' + BAD_JSON);
+  eq('a plain top-level message is read',
+     P.apiErrorMessage('{"message":"overloaded"}', 529), 'HTTP 529 — overloaded');
+  eq('a whitespace-only body says there was no message',
+     P.apiErrorMessage('   \n\t ', 500), 'HTTP 500 — no message in the reply');
+  eq('an empty JSON object says the same as its body', P.apiErrorMessage('{}', 500),
+     'HTTP 500 — {}');
+
+  // The boundary, on both paths, at 299, 300 and 301.
+  [299, 300, 301].forEach(function (n) {
+    var raw = new Array(n + 1).join('z');
+    var out = P.apiErrorMessage(raw, 500);
+    var clipped = n > 300;
+    record('a ' + n + '-character body is ' + (clipped ? 'clipped' : 'whole'),
+           clipped ? (out.indexOf(NOTE_HEAD + n + ' characters of the error body.') > 0 &&
+                      out.indexOf('HTTP 500 — ' + raw.slice(0, 300) + ' Showing') === 0)
+                   : out === 'HTTP 500 — ' + raw,
+           clipped ? 'clipped at 300, note says ' + n : 'whole', out.slice(0, 40) + '…');
+    var jsonOut = P.apiErrorMessage(JSON.stringify({ error: { message: raw } }), 401);
+    record('a ' + n + '-character JSON message is ' + (clipped ? 'clipped' : 'whole'),
+           clipped ? jsonOut.indexOf(NOTE_HEAD + n + ' characters of the error body.') > 0
+                   : jsonOut === 'HTTP 401 — ' + raw,
+           clipped ? 'clipped at 300, note says ' + n : 'whole', jsonOut.slice(0, 40) + '…');
+  });
+
+  // Runs of whitespace collapse before anything is counted or cut, so a body that is
+  // mostly newlines is not shown as a column of blanks and the note's count matches the
+  // single-spaced text beside it.
+  var BLANKS = new Array(201).join('x') + new Array(201).join('\n') + 'y';
+  eq('a body of 401 units collapses to 202 characters and needs no note',
+     P.apiErrorMessage(BLANKS, 500), 'HTTP 500 — ' + new Array(201).join('x') + ' y');
+  eq('tabs and newlines inside a message collapse to single spaces',
+     P.apiErrorMessage(JSON.stringify({ error: { message: 'rate\tlimited\n\n  again' } }), 429),
+     'HTTP 429 — rate limited again');
+
   // --- the guard that keeps splitChunks advancing ------------------------
   // The article move only ever walks the cut back one word. Where the whole chunk is that
   // word, walking back would set end to the chunk's own start: an empty chunk and a loop
