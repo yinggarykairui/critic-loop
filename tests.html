@@ -150,8 +150,11 @@
     });
     return added.sort();
   })(), ['CriticLoopPage']);
-  eq('and it is the one function the suite drives',
-     Object.keys(window.CriticLoopPage || {}).sort(), ['splitChunks']);
+  eq('and it exports exactly the page surface this suite drives',
+     Object.keys(window.CriticLoopPage || {}).sort(),
+     ['API_ERROR_CHARS', 'FINDINGS_OPEN_CAP', 'METRIC_ROWS', 'apiErrorMessage',
+      'appliedTotal', 'expandAllControl', 'isApplicable', 'metricsStrip', 'openFlags',
+      'renderFinding', 'splitChunks', 'verdictLine'].sort());
   ok('app.js loaded without a page around it',
      window.CriticLoopPage && typeof window.CriticLoopPage.splitChunks === 'function');
   eq('the one global exports exactly the documented surface',
@@ -2180,6 +2183,202 @@
   });
   record('the two functions agree wherever no chunk would have ended on an article',
          agreeDrift.length === 0, 'none', agreeDrift.length ? agreeDrift[0] : 'none');
+
+  /* ==================================================================== */
+  g('C12 what the page decides to render');
+  // A mutation sweep over the increment left ten mutants alive at 1405/1405, every one of
+  // them on the page side: the suite drove the engine and took the page on trust. These
+  // assertions are the page side. They call app.js's own functions through
+  // window.CriticLoopPage rather than re-deriving them, so a change to the page breaks
+  // them and a change to a copy cannot.
+  var P = window.CriticLoopPage;
+
+  // --- isApplicable: the two kinds the loop never rewrites ---------------
+  ok('a finding with a replacement is applicable',
+     P.isApplicable({ rule: 'jargon', replacement: 'use' }) === true);
+  ok('a pointer — no replacement at all — is not',
+     P.isApplicable({ rule: 'long-sentence' }) === false);
+  ok('nor is one whose replacement is explicitly null',
+     P.isApplicable({ rule: 'jargon', replacement: null }) === false);
+  ok('a quote the page could not place is not applicable either',
+     P.isApplicable({ rule: 'jargon', replacement: 'use', located: false }) === false);
+  ok('located: true and an absent located both are',
+     P.isApplicable({ rule: 'j', replacement: 'u', located: true }) === true &&
+     P.isApplicable({ rule: 'j', replacement: 'u' }) === true);
+
+  // --- openFlags: one worked example per rule ----------------------------
+  function fApp(rule) { return { rule: rule, replacement: 'x', quote: 'q', why: 'w' }; }
+  function fPtr(rule) { return { rule: rule, quote: 'q', why: 'w' }; }
+  var CAP = P.FINDINGS_OPEN_CAP;
+  eq('the open cap is the one app.js ships', CAP, 10);
+  eq('the first finding of a rule opens and its repeats do not',
+     P.openFlags([fApp('jargon'), fApp('jargon'), fApp('jargon')], CAP),
+     [true, false, false]);
+  eq('each rule gets its own worked example',
+     P.openFlags([fApp('jargon'), fApp('nominalisation'), fApp('jargon'),
+                  fApp('nominalisation'), fApp('filler')], CAP),
+     [true, true, false, false, true]);
+  eq('a pointer never opens, however few there are',
+     P.openFlags([fPtr('long-sentence')], CAP), [false]);
+  eq('and a pointer does not use up its rule’s one open row',
+     P.openFlags([fPtr('jargon'), fApp('jargon')], CAP), [false, true]);
+  eq('an unplaced quote never opens either',
+     P.openFlags([{ rule: 'jargon', replacement: 'x', located: false }, fApp('jargon')], CAP),
+     [false, true]);
+  eq('nothing opens in an empty panel', P.openFlags([], CAP), []);
+
+  // The cap counts rules, because rules are what open. Exactly CAP distinct applicable
+  // rules is still under it; one more closes every box in the panel.
+  function nRules(n) {
+    var out = [], i;
+    for (i = 0; i < n; i++) out.push(fApp('rule-' + i));
+    return out;
+  }
+  function openCount(flags) {
+    var n = 0, i;
+    for (i = 0; i < flags.length; i++) if (flags[i]) n++;
+    return n;
+  }
+  eq('exactly the cap many rules still open', openCount(P.openFlags(nRules(CAP), CAP)), CAP);
+  eq('one rule over the cap opens none of them',
+     openCount(P.openFlags(nRules(CAP + 1), CAP)), 0);
+  eq('and a panel of repeats stays open however long it is: 40 findings, 2 rules',
+     openCount(P.openFlags(nRules(2).concat(nRules(2), nRules(2), nRules(2), nRules(2),
+       nRules(2), nRules(2), nRules(2), nRules(2), nRules(2), nRules(2), nRules(2),
+       nRules(2), nRules(2), nRules(2), nRules(2), nRules(2), nRules(2), nRules(2),
+       nRules(2)), CAP)), 2);
+
+  // --- the pointer tag, in the summary row -------------------------------
+  function summaryOf(f, open) {
+    return P.renderFinding(f, open).querySelector('summary');
+  }
+  var tagRow = summaryOf(fPtr('long-sentence'), false);
+  var tagEl = tagRow.querySelector('.finding-tag');
+  ok('a pointer carries a tag in its summary row', !!tagEl);
+  eq('and the tag reads exactly this', tagEl ? tagEl.textContent : null, 'pointer only');
+  ok('an applicable finding carries no tag',
+     summaryOf(fApp('jargon'), true).querySelector('.finding-tag') === null);
+  ok('an unplaced quote carries no tag either — which way it failed is not two words',
+     summaryOf({ rule: 'jargon', replacement: 'x', located: false, quote: 'q', why: 'w' }, false)
+       .querySelector('.finding-tag') === null);
+  ok('a pointer’s body carries no replacement line',
+     P.renderFinding(fPtr('long-sentence'), true).querySelector('.repl') === null);
+
+  // --- Expand all says which way it will go ------------------------------
+  // The button's label and aria-expanded are recomputed from the list by a capture-phase
+  // toggle listener. <details> fires toggle asynchronously, so this dispatches the event
+  // the browser would, and asserts the button agrees with the list once it lands.
+  function findingList(findings) {
+    var ul = document.createElement('ul');
+    ul.id = 'findings-test';
+    findings.forEach(function (f, i) {
+      var li = document.createElement('li');
+      li.appendChild(P.renderFinding(f, P.openFlags(findings, CAP)[i]));
+      ul.appendChild(li);
+    });
+    return ul;
+  }
+  var EA_LIST = findingList([fApp('jargon'), fApp('jargon'), fApp('nominalisation')]);
+  var EA_BTN = P.expandAllControl(EA_LIST).querySelector('.expand-all');
+  eq('with some findings open and some closed the button offers to expand',
+     EA_BTN.textContent, 'Expand all');
+  eq('and says so to a screen reader', EA_BTN.getAttribute('aria-expanded'), 'false');
+  EA_BTN.click();
+  eq('pressing it opens every finding',
+     EA_LIST.querySelectorAll('details.finding[open]').length, 3);
+  eq('and the button turns around', EA_BTN.textContent, 'Collapse all');
+  eq('aria-expanded with it', EA_BTN.getAttribute('aria-expanded'), 'true');
+  EA_LIST.querySelectorAll('details.finding')[1].open = false;
+  EA_LIST.querySelectorAll('details.finding')[1]
+    .dispatchEvent(new Event('toggle', { bubbles: false }));
+  eq('closing one by hand turns the label back', EA_BTN.textContent, 'Expand all');
+  eq('and aria-expanded back', EA_BTN.getAttribute('aria-expanded'), 'false');
+  EA_BTN.click();
+  eq('pressing it now opens the one that was closed',
+     EA_LIST.querySelectorAll('details.finding[open]').length, 3);
+  EA_BTN.click();
+  eq('and pressing it again closes all three',
+     EA_LIST.querySelectorAll('details.finding[open]').length, 0);
+  eq('the label offers to expand again', EA_BTN.textContent, 'Expand all');
+
+  // --- the mean word column ----------------------------------------------
+  function metricRow(key) {
+    var rows = P.METRIC_ROWS, i;
+    for (i = 0; i < rows.length; i++) if (rows[i].key === key) return rows[i];
+    return null;
+  }
+  function metricLabel(key) { var r = metricRow(key); return r ? r.label : null; }
+  ok('the strip still carries a mean word column', metricRow('meanWordLength') !== null);
+  eq('and its label says the unit', metricLabel('meanWordLength'), 'mean word (chars)');
+  eq('as does the mean sentence column beside it',
+     metricLabel('meanSentenceLength'), 'mean sentence (words)');
+  eq('the strip is these five columns in this order',
+     P.METRIC_ROWS.map(function (r) { return r.key; }),
+     ['words', 'sentences', 'meanSentenceLength', 'meanWordLength', 'hedges']);
+
+  function stripText(m, prev) {
+    return P.metricsStrip(m, prev, null).textContent.replace(/\s+/g, ' ').trim();
+  }
+  var STRIP_A = stripText({ words: 20, sentences: 2, meanSentenceLength: 10, meanWordLength: 5,
+                            hedges: 0 },
+                          { words: 20, sentences: 2, meanSentenceLength: 10, meanWordLength: 5.3,
+                            hedges: 0 });
+  ok('a mean that lands on a whole number keeps its decimal',
+     STRIP_A.indexOf('mean word (chars) 5.3 → 5.0 (−0.3)') >= 0);
+  ok('the mean word column is on the strip at all', STRIP_A.indexOf('mean word') >= 0);
+  var STRIP_B = stripText({ words: 5, sentences: 1, meanSentenceLength: 5, meanWordLength: 4,
+                            hedges: 2 }, null);
+  ok('a count prints without one', STRIP_B.indexOf('hedges 2') >= 0 &&
+     STRIP_B.indexOf('words 5') >= 0);
+  ok('and a lone mean still prints one', STRIP_B.indexOf('mean word (chars) 4.0') >= 0);
+
+  // --- the verdict's applied count is the whole run ----------------------
+  var REC3 = { passes: [{ applied: 3 }, { applied: 1 }, { applied: 10 }] };
+  eq('applied is summed over every pass, not read off the last one',
+     P.appliedTotal(REC3), 14);
+  eq('an empty run applies nothing', P.appliedTotal({ passes: [] }), 0);
+  var CAPPED = P.verdictLine({ passes: REC3.passes, converged: false, cappedClean: false });
+  ok('and the capped verdict prints that total',
+     CAPPED.indexOf('14 edits landed') === 0);
+
+  // --- the error-body cap, on both paths --------------------------------
+  var NOTE_HEAD = 'Showing the first 300 of ';
+  var body300 = new Array(301).join('x');
+  var body301 = new Array(302).join('x');
+  eq('a 300-character body is the cap and is not clipped',
+     P.apiErrorMessage(body300, 500), 'HTTP 500 — ' + body300);
+  ok('a 301-character body is clipped, and says so',
+     P.apiErrorMessage(body301, 500).indexOf(NOTE_HEAD + '301 characters of the error body.') > 0);
+  eq('the clipped message is exactly 300 characters of body, then a space, then the note',
+     P.apiErrorMessage(body301, 500).indexOf(NOTE_HEAD), 'HTTP 500 — '.length + 300 + 1);
+  // The path a real key hits: api.anthropic.com answers 401/429/500 with JSON.
+  var msg606 = new Array(607).join('y');
+  var JSON_ERR = P.apiErrorMessage(JSON.stringify({ type: 'error',
+    error: { type: 'invalid_request_error', message: msg606 } }), 401);
+  ok('a JSON error.message is clipped on the same cap',
+     JSON_ERR.indexOf(NOTE_HEAD + '606 characters of the error body.') > 0);
+  ok('and 606 characters of it do not reach the page',
+     JSON_ERR.indexOf(msg606) === -1);
+  eq('a short JSON message is left alone',
+     P.apiErrorMessage(JSON.stringify({ error: { message: 'invalid x-api-key' } }), 401),
+     'HTTP 401 — invalid x-api-key');
+  eq('an empty body still says something', P.apiErrorMessage('', 500),
+     'HTTP 500 — no message in the reply');
+  eq('the cap constant is the one the note quotes', P.API_ERROR_CHARS, 300);
+
+  // --- the guard that keeps splitChunks advancing ------------------------
+  // The article move only ever walks the cut back one word. Where the whole chunk is that
+  // word, walking back would set end to the chunk's own start: an empty chunk and a loop
+  // that never advances. This is the input that gets there — nothing but articles, cut
+  // two characters at a time — so the guard is what makes this call return at all.
+  var ARTICLES = 'a a a a a a a a a a a a';
+  var AC = SC(ARTICLES, 2);
+  eq('a text of nothing but articles still splits into chunks that advance', AC.length, 12);
+  ok('no chunk is empty', AC.every(function (c) { return c.text.length > 0; }));
+  eq('and the chunks are the text', AC.map(function (c) { return c.text; }).join(''), ARTICLES);
+  eq('every chunk starts where the one before it ended',
+     AC.map(function (c) { return c.start; }),
+     [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22]);
 
   /* ==================================================================== */
   g('performance');

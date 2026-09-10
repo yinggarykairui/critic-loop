@@ -1503,11 +1503,25 @@
     });
   }
 
-  /* splitChunks decides where a finding can and cannot be seen, so tests.html asserts the
-     real one: a copy of a function in a test only ever proves the copy. This is the whole
-     of what this file exposes, nothing on the page reads it, and the page behaves the same
-     with it as without. */
-  window.CriticLoopPage = { splitChunks: splitChunks };
+  /* The page decisions tests.html asserts, reached rather than copied: a copy of a function
+     in a test only ever proves the copy. The suite runs on file:// and cannot fetch a
+     sibling, so this object is how it gets at them. It is the whole of what this file
+     exposes, nothing on the page reads it, and the page behaves the same with it as
+     without. */
+  window.CriticLoopPage = {
+    splitChunks: splitChunks,
+    openFlags: openFlags,
+    isApplicable: isApplicable,
+    renderFinding: renderFinding,
+    expandAllControl: expandAllControl,
+    metricsStrip: metricsStrip,
+    appliedTotal: appliedTotal,
+    verdictLine: verdictLine,
+    apiErrorMessage: apiErrorMessage,
+    METRIC_ROWS: METRIC_ROWS,
+    FINDINGS_OPEN_CAP: FINDINGS_OPEN_CAP,
+    API_ERROR_CHARS: API_ERROR_CHARS
+  };
 
   /* ---------- wiring ----------
      Everything below binds to index.html's elements. The suite loads this file with no
