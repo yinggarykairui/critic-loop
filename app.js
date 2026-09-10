@@ -965,16 +965,28 @@
     return out;
   }
 
+  /* A reply the page cannot read as JSON is shown as it came back, capped. This was the
+     last cap on the page that did not say it had cut anything: the body simply stopped
+     mid-word. The note is the shape the draft, listing and quote caps already use. */
+  var API_ERROR_CHARS = 300;
+
   function apiErrorMessage(raw, status) {
-    var msg = '';
+    var msg = '', note = '';
     try {
       var v = JSON.parse(raw);
       if (v && v.error && v.error.message) msg = String(v.error.message);
       else if (v && v.message) msg = String(v.message);
     } catch (e) { /* not JSON */ }
-    if (!msg) msg = String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    if (!msg) {
+      var body = String(raw || '').replace(/\s+/g, ' ').trim();
+      msg = body.slice(0, API_ERROR_CHARS);
+      if (body.length > API_ERROR_CHARS) {
+        note = ' Showing the first ' + count(API_ERROR_CHARS) + ' of ' + count(body.length) +
+          ' characters of the error body.';
+      }
+    }
     if (!msg) msg = 'no message in the reply';
-    return 'HTTP ' + status + ' — ' + msg;
+    return 'HTTP ' + status + ' — ' + msg + note;
   }
 
   function liveCritique(text, lens, signal, key, model) {
