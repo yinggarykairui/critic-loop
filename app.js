@@ -95,9 +95,17 @@
 
   function count(n) { return Number(n || 0).toLocaleString('en-US'); }
 
-  function signed(d) {
+  /* A mean keeps its decimal even when it lands on a whole number: the strip used to print
+     "mean word 5.3 → 5 (−0.3)", three numbers in two shapes, one of which reads as an
+     integer count. Counts — words, sentences, hedges — are whole and keep num(). */
+  function num1(n) {
+    if (typeof n !== 'number' || !isFinite(n)) return '0.0';
+    return (Math.round(n * 10) / 10).toFixed(1);
+  }
+
+  function signed(d, fmt) {
     if (d === 0) return '±0';
-    return (d > 0 ? '+' : '−') + num(Math.abs(d));
+    return (d > 0 ? '+' : '−') + (fmt || num)(Math.abs(d));
   }
 
   function shortenForDisplay(text, limit) {
@@ -297,14 +305,19 @@
 
   /* ---------- metrics strip ---------- */
 
+  /* The two mean columns are read side by side and are not the same unit, so each names
+     its own: mean sentence counts words, mean word counts characters. `mean` marks the
+     columns that print a decimal even on a whole number. */
   var METRIC_ROWS = [
     { key: 'words', label: 'words' },
     { key: 'sentences', label: 'sentences' },
-    { key: 'meanSentenceLength', label: 'mean sentence' },
-    /* Mean word length is the column that moves under a clarity pass: a jargon swap keeps
-       the word count exactly ("utilises" for "uses") and shortens the words. It sits beside
-       mean sentence because the two are read together. */
-    { key: 'meanWordLength', label: 'mean word' },
+    { key: 'meanSentenceLength', label: 'mean sentence (words)', mean: true },
+    /* Mean word length is a column a clarity pass moves without moving the word count: a
+       jargon swap trades one word for one word ("uses" for "utilises"). Which way it moves
+       depends on the swap — plainer is usually shorter, but an economy pass that deletes
+       filler leaves the long words behind and pushes it up. It sits beside mean sentence
+       because the two are read together. */
+    { key: 'meanWordLength', label: 'mean word (chars)', mean: true },
     { key: 'hedges', label: 'hedges' }
   ];
 
@@ -336,14 +349,15 @@
       var row = METRIC_ROWS[i];
       if (row.key === 'meanSentenceLength' && drop) continue;
       var cur = m && typeof m[row.key] === 'number' ? m[row.key] : 0;
+      var fmt = row.mean ? num1 : num;
       var item = el('span', 'metric');
       item.appendChild(el('span', 'metric-name', row.label + ' '));
       if (prev && typeof prev[row.key] === 'number' && prev[row.key] !== cur) {
-        item.appendChild(el('span', 'metric-val', num(prev[row.key]) + ' → ' + num(cur)));
+        item.appendChild(el('span', 'metric-val', fmt(prev[row.key]) + ' → ' + fmt(cur)));
         item.appendChild(document.createTextNode(' '));
-        item.appendChild(el('span', 'metric-delta', '(' + signed(cur - prev[row.key]) + ')'));
+        item.appendChild(el('span', 'metric-delta', '(' + signed(cur - prev[row.key], fmt) + ')'));
       } else {
-        item.appendChild(el('span', 'metric-val', num(cur)));
+        item.appendChild(el('span', 'metric-val', fmt(cur)));
         if (prev) item.appendChild(el('span', 'metric-delta', ' (±0)'));
       }
       wrap.appendChild(item);
