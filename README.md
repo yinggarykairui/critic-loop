@@ -13,28 +13,37 @@ The page runs the draft → critique → revise loop and renders every intermedi
 critique 1, draft 1, critique 2, draft 2, critique 3, draft 3. Each finding names its rule, quotes
 the span it is about — elided at a word boundary above 400 characters, with a note saying how much
 was elided — says in one sentence what is wrong, and either shows the replacement it proposes or
-marks itself a pointer the loop will not auto-apply. Six of the twelve rules only point:
-where a rewrite would change the meaning or the grammar, the critic says so instead of guessing.
-Each draft carries a metrics strip — edits applied, words, sentences, hedges, and mean sentence
-length when a draft has more than one sentence — with the delta from the draft before it, and a
-word-level diff you can toggle against the clean text.
+carries a `pointer only` tag in its own row. Six of the twelve rules only point: where a rewrite
+would change the meaning or the grammar, the critic says so instead of guessing. A finding the loop
+will act on opens with its why and its replacement showing; a pointer opens closed, because the tag
+is all of it. Each draft carries a metrics strip — edits applied, words, sentences, mean sentence
+length when a draft has more than one sentence, mean word length, and hedges — with the delta from
+the draft before it, and a word-level diff you can toggle against the clean text. Mean word length
+is the column that moves under a clarity pass: a jargon swap keeps the word count exactly ("uses"
+for "utilises") and shortens the words.
 
 The default engine is a deterministic rule-based critic that runs in the page: twelve rules across
 three lenses — clarity, then concreteness, then economy, one per pass. No model, no network, no key.
 The same paragraph produces the same critique every time. **The loop stops early when a pass finds
 nothing and every lens it has not yet run also finds nothing** — the bundled "already clean" sample
 does this on pass 1, and the page ends on the sentence *"The draft came out clean after 1 pass, with
-2 passes to spare."* Four outcomes get four different sentences: clean with passes to spare, clean on
-the last pass, still needing work with no passes left, and — live mode only — no reply the page could
-read as edits. The status line, the result panel and the exported transcript always print the same
-one. That early stop is the behaviour a static diagram of this pattern cannot show.
+2 passes to spare."* "Almost clean", the fourth sample, does it on pass 2 after applying three edits,
+which is the same stop reached after real work. Four outcomes get four different sentences: clean
+with passes to spare, clean on the last pass, still needing work with no passes left, and — live
+mode only — no reply the page could read as edits. The third has a second shape: a run that changed
+the draft on its way to the cap leads with what landed, *"14 edits landed. The draft still needs work
+after 3 passes, and there are no passes left."* The status line, the result panel and the exported
+transcript always print the same one. That early stop is the behaviour a static diagram of this
+pattern cannot show.
 
 Live mode swaps in a real model if you paste an Anthropic API key: the same three lenses become
 system prompts and the findings flow through the same render path, quotes located in the draft the
 same way. The key is read from the field on each run, sent only to `api.anthropic.com`, stored
 nowhere, and never written into the exported transcript.
 
-`tests.html` is the engine's own suite: 1,265 assertions, run it by opening the file.
+`tests.html` is the engine's own suite: 1,405 assertions, run it by opening the file. It also drives
+one function out of the page itself — the chunk splitter — rather than a copy of it, with the old
+version kept beside it as a control that has to fail.
 
 Limits worth knowing. Four of these the page announces at the moment they apply: text over 6,000
 characters is critiqued in chunks, so a finding never spans a chunk boundary and a few long sentences
