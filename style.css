@@ -395,10 +395,15 @@ textarea.is-locked { background: var(--disabled-bg); cursor: default; }
 .finding[open] > summary::before { content: "\25BE"; }
 
 .rule-name {
-  /* The rule name keeps its own column: without a floor the quote's flex basis crushes a
-     long quote's rule name down to one letter and an ellipsis. */
-  flex: 0 1 auto;
-  min-width: 5.5rem;
+  /* The rule name names the complaint, so it is the one part of a closed row that is never
+     shortened to make room: it does not shrink, and the quote beside it is what gives way.
+     A floor instead of this let the quote's flex basis clip LONG SENTENCE to LONG SENT at
+     full desktop width. inline-block with a ceiling keeps the ellipsis working in an open
+     row too, where the summary is a block and the name is not a flex item. */
+  flex: 0 0 auto;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: bottom;
   font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -598,4 +603,16 @@ textarea.is-locked { background: var(--disabled-bg); cursor: default; }
   .btn { flex: 1 1 auto; }
   .run-row .status { flex: 1 1 100%; }
   .quote, .finding-body { margin-left: 0.6rem; }
+
+  /* Narrow, a closed finding is two lines, not one: the rule name and any tag on the
+     first, the quoted span across the full width below it. Squeezed onto one line the
+     quote got 29 px of a 3,267 px span — 0.9 % of its own content — while the tag held
+     101 px, so the row's labels beat the row's content. Wrapped, the content gets the
+     width. The rule name may shrink and clip here, because at this width it must. */
+  .finding:not([open]) > summary { flex-wrap: wrap; }
+  .finding:not([open]) > summary .rule-name { flex: 0 1 auto; min-width: 0; }
+  .finding:not([open]) > summary .quote {
+    flex: 1 1 100%;
+    margin: 0.15rem 0 0 0.6rem;
+  }
 }
