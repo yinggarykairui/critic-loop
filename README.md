@@ -12,11 +12,14 @@ shown between every draft — the part a diagram of this pattern always leaves o
 The page runs the draft → critique → revise loop and renders every intermediate state: draft 0,
 critique 1, draft 1, critique 2, draft 2, critique 3, draft 3. Each finding names its rule, quotes
 the span it is about — elided at a word boundary above 400 characters, with a note saying how much
-was elided — says in one sentence what is wrong, and either shows the replacement it proposes or
+of the span is on screen and how long the span really is — says in one sentence what is wrong, and either shows the replacement it proposes or
 carries a `pointer only` tag in its own row. Six of the twelve rules only point: where a rewrite
 would change the meaning or the grammar, the critic says so instead of guessing. A panel opens one
 worked example per rule — the first finding the loop will act on, with its why and its replacement
-showing — and every repeat of that rule is one closed row, as is every pointer. Each draft carries
+showing — and every repeat of that rule is one closed row, as is every pointer. Above ten
+distinct rules in one pass the panel opens nothing at all, on the reasoning that ten worked
+examples is a wall rather than an example; `Expand all` still reaches every finding. Offline
+no lens holds more than four rules, so that cap is a live-mode shape. Each draft carries
 a metrics strip — edits applied, words, sentences, mean sentence (words) when a draft has more than
 one sentence, mean word (chars), and hedges — with the delta from the draft before it, and a
 word-level diff you can toggle against the clean text. Mean word is the column a clarity pass moves
@@ -44,7 +47,7 @@ system prompts and the findings flow through the same render path, quotes locate
 same way. The key is read from the field on each run, sent only to `api.anthropic.com`, stored
 nowhere, and never written into the exported transcript.
 
-`tests.html` is the suite: 1,604 assertions, run it by opening the file. Most of them are the
+`tests.html` is the suite: 1,718 assertions, run it by opening the file. Most of them are the
 engine's. The rest drive the page's own decisions out of `app.js` rather than a copy of them — which
 findings a panel opens, what the pointer tag says, where a chunk may be cut, what the metrics strip
 prints, what the error-body cap does at 299, 300 and 301 characters — because a copy of a function
@@ -60,8 +63,13 @@ counting rule is reported once per draft rather than once per chunk. A fifth is 
 start rather than when it bites: the rules are English-only and there is no language detection, so a
 paragraph in another language gets whatever the rules happen to match, which is usually little or
 nothing — the textarea's placeholder says the lenses only know English, and that is the whole of the
-warning. One you only get here: live mode has been exercised against a mocked transport — every error
-path, the lenient JSON parse, abort — but never against a real key, because this project holds none.
+warning. One you only get here: live mode's transport has never been run. Not against a real key,
+because this project holds none — and not against a mock either: there is no fake `fetch` anywhere in
+the suite. What is asserted is the formatting *around* the transport, which is the part that does not
+need one — `apiErrorMessage` and the error-body cap at 299, 300 and 301 characters, 22 assertions of
+it. The `fetch` call itself, the lenient JSON parse that reads a non-conforming reply, and the
+`AbortController` behind Stop have no test of their own. Every other claim on this page is one you can
+check by opening the file; this is the one you have to take on trust, so it is stated at full size.
 
 ## How to run
 
