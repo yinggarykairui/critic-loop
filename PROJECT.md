@@ -150,7 +150,7 @@ Increment 2 (day 047) — items and states:
 
 ### Increment 5 — evening polish (2026-09-10 evening shift)
 
-The evening ran its three cycles on the day-047 ship, `3b73c74`, and left fifteen commits
+The evening ran its three cycles on the day-047 ship, `3b73c74`, and left seventeen commits
 in two batches, one per defect list a critic pass produced. Commit timestamps run past
 midnight into 2026-09-11 UTC; `git log --oneline 3b73c74..HEAD` is the list. Nothing was
 added to scope: every commit closes a defect that was reported before it was written.
@@ -173,14 +173,20 @@ The first seven commits, `73887d1` … `83e58bc`, close the first defect list:
       was false — there is no fake `fetch` in the suite — and the sentence now says so.
 - [x] `tests.html` green: 1,604 assertions → 1,718, in groups C13–C16.
 
-The last eight, `5da8790` … this commit, close the second:
+The last ten, `5da8790` … this commit, close the second:
 
 - [x] F3 `style.css`: a closed finding's quote starts at one x. The shrink-wrap from
       `8fe1c81` stayed, but `flex-wrap` broke the line only for quotes too wide to sit
       beside the rule name, so the left edge depended on the quote's length. Bloated
       corporate at 390, first panel: lefts `[41, 120, 230]`, 4 inline / 4 stacked → lefts
       `[41]`, 0 inline / 8 stacked. Every narrow panel of every sample now reads `[41]`.
-      768 and 1200 byte-identical; `scrollWidth === clientWidth` at all five widths.
+      768 and 1200 byte-identical; `scrollWidth === clientWidth` at all five widths. The
+      break is a full-width `summary::after` flex item with the quote ordered after it;
+      `5da8790` made the row a block instead and `60619dd` replaced that, because in block
+      flow the `pointer only` badge starts its line with its own left margin and went 11 px
+      past the panel at 320 px with 200 % text zoom. Cost, recorded: every closed row is
+      two lines narrow, so the rows that fitted on one gain 22 px — corporate's critique
+      panels at 390 go 821/452/1056 px → 916/453/1170.
 - [x] F1 `app.js`: `CHUNK_THRESHOLD` and `DIFF_CHAR_LIMIT` count code points, so every
       limit the page announces counts what the counter under the box counts. A paste of
       6,077 units / 3,077 characters was called "3,077 characters" and then chunked and
