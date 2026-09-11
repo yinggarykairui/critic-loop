@@ -131,9 +131,18 @@
     return (d > 0 ? '+' : '−') + (fmt || num)(Math.abs(d));
   }
 
-  /* A string's characters as a reader counts them: an astral character is one, not the two
-     UTF-16 units it is stored as. Array.from would do it in one word; this file targets no
-     build step and no polyfill, and the loop is the same thing spelled out. */
+  /* A string's code points: an astral character is one, not the two UTF-16 units it is
+     stored as. Array.from would do it in one word; this file targets no build step and no
+     polyfill, and the loop is the same thing spelled out.
+
+     This is the unit everything on the page that says "characters" counts in, and it is a
+     line drawn on purpose rather than the only defensible one. It is much closer to what a
+     reader counts than a UTF-16 unit is — 3,000 emoji are 3,000 and not 6,000 — but it is
+     not always equal to it: a ZWJ family emoji is five code points and one glyph, and an
+     é written as e + U+0301 is two code points and one letter. Grapheme clusters would be
+     the count a reader makes, and Intl.Segmenter is how you would get them; that is a
+     dependency on a browser API this build does not otherwise need, for a difference only
+     composed text shows. So: code points, said in the README rather than implied. */
   function codePoints(s) {
     var out = [], i = 0, c, code;
     while (i < s.length) {
@@ -190,8 +199,8 @@
   }
 
   /* The cut and both numbers beside it count the way clipApiError already counts, and for
-     the same reason: a character is what a reader counts, not the UTF-16 unit it is stored
-     as. Cutting on units got both halves wrong at once — 'A' + one emoji 3,000 times is
+     the same reason: the unit codePoints spells out above, not the UTF-16 unit a string is
+     stored in. Cutting on units got both halves wrong at once — 'A' + one emoji 3,000 times is
      3,001 characters and the note read "Showing the first 6,000 of 6,001 characters", and
      the cut at unit 6,000 landed inside a surrogate pair, so the panel ended on half an
      emoji. Slicing code points cuts between characters and prints the numbers on the page. */
@@ -362,9 +371,11 @@
     return String(value == null ? '' : value).replace(INVISIBLE, '') === '';
   }
 
-  /* The counter under the box counts characters the way the three display caps count them:
-     a paste of 50 emoji is 50 characters, and used to read "100 characters". The label is
-     its own function so the suite can read it with no page around it. */
+  /* The counter under the box counts the way every other number on this page that says
+     "characters" counts — the three display caps and the two run limits — in code points:
+     a paste of 50 emoji is 50 characters, and used to read "100 characters". codePointCount
+     rather than codePoints because this runs on every keystroke. The label is its own
+     function so the suite can read it with no page around it. */
   function counterLabel(value) {
     var n = codePointCount(value);
     return n === 1 ? '1 character' : count(n) + ' characters';
@@ -1184,11 +1195,11 @@
      quote caps already use. */
   var API_ERROR_CHARS = 300;
 
-  /* Both numbers in the note are counted the way a reader counts them: in code points, not
-     in the UTF-16 units a JavaScript string is stored as. An error body of one letter and
-     200 emoji is 401 units and 201 characters on screen, so the old count said "the first
-     300 of 401 characters" about a string a reader counts 201 of — and the cut at unit 300
-     landed inside a surrogate pair, ending the line on half an emoji. Splitting on code
+  /* Both numbers in the note are counted in code points, not in the UTF-16 units a
+     JavaScript string is stored as. An error body of one letter and 200 emoji is 401 units
+     and 201 characters on screen, so the old count said "the first 300 of 401 characters"
+     about a string 201 of them make up — and the cut at unit 300 landed inside a surrogate
+     pair, ending the line on half an emoji. Splitting on code
      points fixes both: the string is cut between characters, and the two numbers are the
      ones on the page. The collapse of runs of whitespace comes first, so a body that is
      mostly newlines is not clipped to a column of blanks — it is also what makes the note's

@@ -3118,9 +3118,16 @@
   });
   eq('a missing value counts as nothing',
      [P.codePointCount(null), P.codePointCount(undefined)], [0, 0]);
-  eq('the counter under the box and the limits count with the same function',
-     P.counterLabel(rep2(EMO2, 3000)),
-     '3,000 characters');
+  // The README says this unit out loud, and says where it parts company with the count a
+  // reader would make by eye. These are the three examples it gives.
+  eq('3,000 emoji are 3,000 characters, not the 6,000 units they are stored as',
+     P.counterLabel(rep2(EMO2, 3000)), '3,000 characters');
+  eq('a ZWJ family emoji is five, which is not what a reader sees',
+     P.counterLabel('👨‍👩‍👧'), '5 characters');
+  eq('and an é written as e + a combining accent is two',
+     P.counterLabel('e\u0301'), '2 characters');
+  eq('the same é written as one code point is one',
+     P.counterLabel('\u00e9'), '1 character');
   // stopAt is the reason a limit test does not walk a whole paste. It stops at the number
   // asked for and never above it.
   eq('the walk stops at the number the caller asked for',
