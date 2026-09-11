@@ -612,9 +612,22 @@ textarea.is-locked { background: var(--disabled-bg); cursor: default; }
      first, the quoted span across the full width below it. Squeezed onto one line the
      quote got 29 px of a 3,267 px span — 0.9 % of its own content — while the tag held
      101 px, so the row's labels beat the row's content. Wrapped, the content gets the
-     width. The rule name may shrink and clip here, because at this width it must. */
-  .finding:not([open]) > summary { flex-wrap: wrap; }
-  .finding:not([open]) > summary .rule-name { flex: 0 1 auto; min-width: 0; }
+     width. The rule name may shrink and clip here, because at this width it must.
+
+     The break is unconditional, which is the point. flex-wrap alone broke the line only
+     for the quotes that did not fit, so whether a closed quote started at the panel edge
+     or halfway across the row depended on how long that quote happened to be: one panel
+     of Bloated corporate at 390 px ran its boxes down x = 41, 120, 230, 41, 178 — a
+     column with no column, on a rule invisible from outside the stylesheet. The summary
+     is a block here, as it already is when the finding is open, so the name and its tag
+     hold the first line and the quote starts the second one at the same x in every row.
+     Open and closed then differ in what they show, not in where the quote begins. */
+  .finding:not([open]) > summary { display: block; }
+  .finding:not([open]) > summary .finding-tag {
+    display: inline-block;
+    vertical-align: 1px;
+    margin-left: 0.35rem;
+  }
   /* The name wraps here instead of clipping. At 320 px it fits on one line and this
      changes nothing; at 320 px with 200 % text zoom the line holds 204 px of a name that
      wants 231, and half of EMPTY INTENSIFIER is not a shorter label, it is a different
@@ -626,10 +639,10 @@ textarea.is-locked { background: var(--disabled-bg); cursor: default; }
      390 px exactly 320 px: "holistic" got the same box as "at this point in time", and
      14 of 21 findings read as a column of identical empty input fields. width: max-content
      with a 100 % ceiling shrink-wraps a short span and still hands a long one the full
-     line — its content is wider than the line, so it wraps below the rule name and is
-     clamped there, which is the width this rule was added to give it. */
+     line. It is a block on its own line now rather than a flex item that may or may not
+     wrap, so the box hugs its text and every box starts at the same x. */
   .finding:not([open]) > summary .quote {
-    flex: 0 1 auto;
+    display: block;
     width: max-content;
     max-width: 100%;
     margin: 0.15rem 0 0 0.6rem;

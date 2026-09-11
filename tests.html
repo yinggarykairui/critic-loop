@@ -2425,6 +2425,35 @@
   ok('a pointer’s body carries no replacement line',
      P.renderFinding(fPtr('long-sentence'), true).querySelector('.repl') === null);
 
+  // --- the order of the summary row, which the narrow stylesheet leans on ----------
+  // Narrow, a closed summary is a block: the rule name and its tag take the first line and
+  // the quote starts the second at a fixed x. That only holds while the tag comes between
+  // the name and the quote in document order — a tag emitted after the quote would land
+  // under it, on the quote's line, and the badge would read as a label for the quote
+  // rather than for the rule. The stylesheet cannot assert this; the DOM it styles can.
+  function summaryClasses(f, open) {
+    var kids = summaryOf(f, open).children, out = [], i;
+    for (i = 0; i < kids.length; i++) out.push(kids[i].className);
+    return out;
+  }
+  eq('a closed pointer row is rule name, tag, quote, in that order',
+     summaryClasses(fPtr('long-sentence'), false), ['rule-name', 'finding-tag', 'quote']);
+  eq('an open pointer row is the same three in the same order',
+     summaryClasses(fPtr('long-sentence'), true), ['rule-name', 'finding-tag', 'quote']);
+  eq('a finding with a replacement is rule name then quote',
+     summaryClasses(fApp('jargon'), false), ['rule-name', 'quote']);
+  var ORDER_ROW = summaryOf(fPtr('long-sentence'), false);
+  ok('the tag precedes the quote in document order',
+     !!(ORDER_ROW.querySelector('.finding-tag').compareDocumentPosition(
+          ORDER_ROW.querySelector('.quote')) & Node.DOCUMENT_POSITION_FOLLOWING));
+  // A capped quote's note is the one thing that follows the quote, and it is hidden while
+  // the finding is closed, so it never joins the two lines the closed row is made of.
+  var LONGQ = { rule: 'jargon', ruleName: 'Jargon', why: 'w', replacement: null,
+                quote: new Array(120).join('holistic framework ') };
+  eq('a capped quote puts its note after the quote and nowhere else',
+     summaryClasses(LONGQ, false), ['rule-name', 'finding-tag', 'quote',
+                                    'truncated-note quote-note']);
+
   // --- Expand all says which way it will go ------------------------------
   // The button's label and aria-expanded are recomputed from the list by a capture-phase
   // toggle listener. <details> fires toggle asynchronously, so this dispatches the event
