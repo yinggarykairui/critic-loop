@@ -47,15 +47,16 @@ tests.html   critic.js's own suite in a page. Every rule gets a case that fires 
 
 The engine is separated from the page precisely so `tests.html` can drive it without a DOM, and
 so live mode is a swap of one async function rather than a second code path through the UI. app.js
-adds exactly one global, `window.CriticLoopPage`, and it carries nineteen keys: `splitChunks`,
+adds exactly one global, `window.CriticLoopPage`, and it carries twenty-five keys: `splitChunks`,
 `openFlags`, `isApplicable`, `renderFinding`, `expandAllControl`, `metricsStrip`, `metricLine`,
-`shortenForDisplay`, `shortenQuoteForDisplay`, `counterLabel`, `isBlankInput`, `appliedTotal`,
-`verdictLine`, `apiErrorMessage`, `METRIC_ROWS`, `FINDINGS_OPEN_CAP`, `API_ERROR_CHARS`,
-`DRAFT_DISPLAY_CHARS`, `QUOTE_DISPLAY_CHARS`. It was
-one key when this paragraph was written and was widened in the same increment, by the commit that
-made the suite assert the page's decisions instead of only the engine's. `tests.html` asserts that
-exact list, so it cannot widen again unnoticed. Nothing on the page reads the object, and app.js's
-wiring stands down when there is no page around it.
+`shortenForDisplay`, `shortenQuoteForDisplay`, `counterLabel`, `codePointCount`, `longerThan`,
+`pairLongerThan`, `isBlankInput`, `appliedTotal`, `verdictLine`, `apiErrorMessage`, `METRIC_ROWS`,
+`METRIC_SEP`, `FINDINGS_OPEN_CAP`, `API_ERROR_CHARS`, `DRAFT_DISPLAY_CHARS`, `QUOTE_DISPLAY_CHARS`,
+`CHUNK_THRESHOLD`, `DIFF_CHAR_LIMIT`. It was one key when this paragraph was written, was widened in
+increment 3 by the commit that made the suite assert the page's decisions instead of only the
+engine's, and has widened twice since — every time because a fix was only testable through it.
+`tests.html` asserts that exact list, so it cannot widen again unnoticed. Nothing on the page reads
+the object, and app.js's wiring stands down when there is no page around it.
 
 ## Done-map
 
@@ -131,8 +132,10 @@ Increment 2 (day 047) — items and states:
       Dropping the guard reads 1,570/1,615 in a second instead of killing the renderer.
 - [x] G3 `app.js`: the strip's delta is the difference between the two numbers the row
       prints. 4.96 against 5.04 printed "5.0 → 5.0 (−0.1)"; it prints "5.0 (±0)".
-- [x] G4/G5 docs: the exported surface is twelve keys and this file says so; the verdict
-      thread says what the README says.
+- [x] G4/G5 docs: the exported surface was twelve keys at the close of that increment, and
+      this file was made to say so; the verdict thread says what the README says. It has
+      widened twice since — see increment 5 — and the paragraph above is the one that has
+      to be right.
 - [x] G6/G7 `app.js`: the error-body cap counts and cuts on code points, and a JSON
       `message` that is not a string takes the raw body's path instead of printing
       `[object Object]`.
@@ -144,6 +147,65 @@ Increment 2 (day 047) — items and states:
       before or after.
 - [x] `tests.html` green: 1,458 assertions → 1,604. Sweep of 20 mutants: 19 killed by
       assertion, 1 equivalent and recorded as equivalent.
+
+### Increment 5 — evening polish (2026-09-10 evening shift)
+
+The evening ran its three cycles on the day-047 ship, `3b73c74`, and left fifteen commits
+in two batches, one per defect list a critic pass produced. Commit timestamps run past
+midnight into 2026-09-11 UTC; `git log --oneline 3b73c74..HEAD` is the list. Nothing was
+added to scope: every commit closes a defect that was reported before it was written.
+
+The first seven commits, `73887d1` … `83e58bc`, close the first defect list:
+
+- [x] `app.js`: the exported metrics line prints the strip's columns under the strip's
+      rules; "Almost clean" no longer exports the same line before and after a pass that
+      applied three edits.
+- [x] `app.js`: `shortenForDisplay`, `shortenQuoteForDisplay` and the textarea counter cut
+      and count in code points, as `clipApiError` already did.
+- [x] `app.js`: `num()` groups thousands the way `count()` does, so one strip does not
+      print `edits applied 1,000 · words 7400`.
+- [x] `app.js`: the empty-input guard strips zero-width and format characters as well as
+      whitespace. The critiqued text is unchanged; only the test moved.
+- [x] `style.css`: `.samples` keeps its top clearance at every width.
+- [x] `style.css`: a closed finding's quote is as wide as its quote below 26 rem, not a
+      fixed 250/320 px slab.
+- [x] `README.md`: the claim that live mode had been exercised against a mocked transport
+      was false — there is no fake `fetch` in the suite — and the sentence now says so.
+- [x] `tests.html` green: 1,604 assertions → 1,718, in groups C13–C16.
+
+The last eight, `5da8790` … this commit, close the second:
+
+- [x] F3 `style.css`: a closed finding's quote starts at one x. The shrink-wrap from
+      `8fe1c81` stayed, but `flex-wrap` broke the line only for quotes too wide to sit
+      beside the rule name, so the left edge depended on the quote's length. Bloated
+      corporate at 390, first panel: lefts `[41, 120, 230]`, 4 inline / 4 stacked → lefts
+      `[41]`, 0 inline / 8 stacked. Every narrow panel of every sample now reads `[41]`.
+      768 and 1200 byte-identical; `scrollWidth === clientWidth` at all five widths.
+- [x] F1 `app.js`: `CHUNK_THRESHOLD` and `DIFF_CHAR_LIMIT` count code points, so every
+      limit the page announces counts what the counter under the box counts. A paste of
+      6,077 units / 3,077 characters was called "3,077 characters" and then chunked and
+      denied a word diff. ASCII is asserted unchanged at 5,998–6,002 and at the diff
+      line. `codePointCount` walks without allocating and stops at the limit asked for:
+      the counter over a 10,000,000-character paste goes 189.0 ms → 35.2 ms, and both
+      limit tests over it cost 0.1 ms.
+- [x] F4 `app.js`: `metricLine` walks `METRIC_ROWS` instead of a second hand-written list
+      of column names. The copy had already drifted — the strip said `mean word (chars)`
+      and the export said `mean word`.
+- [x] F5 `app.js`: exported fields are divided by ` · `, the page's own separator, so the
+      comma is only ever the thousands separator.
+- [x] F6 docs: the README says the counts are code points and where that parts from the
+      count a reader makes by eye; no comment still argues the choice as "what a reader
+      counts".
+- [x] F2 `README.md`: the live-mode paragraph said "22 assertions of it" and the number
+      was wrong. It says 25, names the rule it was counted by, and gives the block's 32.
+- [x] `README.md`: the suite's size is the number `#headline` reports, 1,789.
+- [x] F7 docs: this block, and the exported-surface paragraph above, which said nineteen
+      keys while the page carried twenty-five and said "twelve keys, and this file says
+      so" in the present tense two lines below it.
+- [x] `tests.html` green: 1,718 assertions → 1,789. Every code fix in this list is
+      asserted; the one CSS-only fix is measured with Playwright and quoted in its commit,
+      because `tests.html` runs on `file://` and Chromium refuses `cssRules` on a sheet it
+      considers cross-origin, so the suite cannot see `style.css` at all.
 
 ## Open threads
 
