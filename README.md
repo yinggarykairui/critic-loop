@@ -55,28 +55,31 @@ in a test only ever proves the copy.
 The chunk splitter keeps its old version beside it as a control that has to fail.
 
 Limits worth knowing. Four of these the page announces at the moment they apply: text over 6,000
-characters is critiqued in chunks, so a finding never spans a chunk boundary and a few long sentences
-that straddle one go unflagged; transcript panels show the first 6,000 characters of a draft and the
-first 60 findings of a pass, while copy, export and the revision itself always use everything and the
-true counts are always printed; the word diff is skipped above 12,000 combined characters; and a
-counting rule is reported once per draft rather than once per chunk. Every "characters" on this page
-— those limits, the counter under the box, the 300-character error-body cap — is a count of Unicode
-code points, which is not always the count you would make by eye: 3,000 emoji are 3,000 and not the
-6,000 UTF-16 units they are stored as, but a `👨‍👩‍👧` is five and an `é` written as `e` + a combining
-accent is two. A fifth limit is announced before you start rather than when it bites: the rules are
-English-only and there is no language detection, so a paragraph in another language gets whatever
-the rules happen to match, which is usually little or nothing — the textarea's placeholder says the
-lenses only know English, and that is the whole of the warning. One you only get here: live mode's
-transport has never been run. Not against a real key,
-because this project holds none — and not against a mock either: there is no fake `fetch` anywhere in
-the suite. What is asserted is the formatting *around* the transport, which is the part that does not
-need one — `apiErrorMessage` and the error-body cap at 299, 300 and 301 characters. That is 25
-assertions, counting an assertion as one of them when `apiErrorMessage` runs while its arguments are
-being built; they sit in a block of 32, the other seven checking the cap constant and the lengths
-those calls are made with. The `fetch` call itself, the lenient JSON parse that reads a
-non-conforming reply, and the `AbortController` behind Stop have no test of their own. Every other
-claim on this page is one you can check by opening the file; this is the one you have to take on
-trust, so it is stated at full size.
+characters is critiqued in chunks, so a finding never spans a chunk boundary and a few long
+sentences that straddle one go unflagged; transcript panels show the first 6,000 characters of a
+draft and the first 60 findings of a pass, while copy, export and the revision itself always use
+everything and the true counts are always printed; the word diff is skipped above 12,000 combined
+characters; and a counting rule is reported once per draft rather than once per chunk. Those four
+limits, the counter under the box, the size the chunk note reports and the 300-character error-body
+cap are all counts of Unicode code points, which is not always the count you would make by eye:
+3,000 emoji are 3,000 and not the 6,000 UTF-16 units they are stored as, but a `👨‍👩‍👧` is five and
+an `é` written as `e` + a combining accent is two. One limit is not, and says so where it bites:
+live mode refuses a draft over 12,000 UTF-16 units, counted in the unit the draft is stored in
+because that number is a proxy for what the request sends over the wire, and its message states both
+numbers in that unit and names it rather than calling them characters. A limit of another kind is
+announced before you start rather than when it bites: the rules are English-only and there is no
+language detection, so a paragraph in another language gets whatever the rules happen to match,
+which is usually little or nothing — the textarea's placeholder says the lenses only know English,
+and that is the whole of the warning. One you only get here: live mode's transport has never been
+run. Not against a real key, because this project holds none — and not against a mock either: there
+is no fake `fetch` anywhere in the suite. What is asserted is the formatting *around* the transport,
+which is the part that does not need one — `apiErrorMessage` and the error-body cap at 299, 300 and
+301 characters. That is 25 assertions, counting an assertion as one of them when `apiErrorMessage`
+runs while its arguments are being built; they sit in a block of 32, the other seven checking the
+cap constant and the lengths those calls are made with. The `fetch` call itself, the lenient JSON
+parse that reads a non-conforming reply, and the `AbortController` behind Stop have no test of their
+own. Every other claim on this page is one you can check by opening the file; this is the one you
+have to take on trust, so it is stated at full size.
 
 ## How to run
 
