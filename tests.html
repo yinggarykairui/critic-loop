@@ -152,10 +152,11 @@
   })(), ['CriticLoopPage']);
   eq('and it exports exactly the page surface this suite drives',
      Object.keys(window.CriticLoopPage || {}).sort(),
-     ['API_ERROR_CHARS', 'DRAFT_DISPLAY_CHARS', 'FINDINGS_OPEN_CAP', 'METRIC_ROWS',
-      'QUOTE_DISPLAY_CHARS', 'apiErrorMessage', 'appliedTotal', 'counterLabel',
-      'expandAllControl', 'isApplicable', 'isBlankInput', 'metricLine', 'metricsStrip',
-      'openFlags', 'renderFinding', 'shortenForDisplay', 'shortenQuoteForDisplay',
+     ['API_ERROR_CHARS', 'CHUNK_THRESHOLD', 'DIFF_CHAR_LIMIT', 'DRAFT_DISPLAY_CHARS',
+      'FINDINGS_OPEN_CAP', 'METRIC_ROWS', 'QUOTE_DISPLAY_CHARS', 'apiErrorMessage',
+      'appliedTotal', 'codePointCount', 'counterLabel', 'expandAllControl', 'isApplicable',
+      'isBlankInput', 'longerThan', 'metricLine', 'metricsStrip', 'openFlags',
+      'pairLongerThan', 'renderFinding', 'shortenForDisplay', 'shortenQuoteForDisplay',
       'splitChunks', 'verdictLine'].sort());
   ok('app.js loaded without a page around it',
      window.CriticLoopPage && typeof window.CriticLoopPage.splitChunks === 'function');
@@ -3044,6 +3045,119 @@
   // The engine still sees every character of it, invisibles included.
   eq('the critic counts the pasted text as it was pasted',
      C.metrics(KEEP).chars, KEEP.length);
+
+  /* ==================================================================== */
+  g('C17 the two run limits count characters too');
+  // C14 moved three display counters to code points and left the two limits a run applies
+  // on UTF-16 units, so one paste could be told two different things in one word:
+  // 'We utilise ... ' + 3,000 emoji is 6,077 units and 3,077 characters, the counter under
+  // the box read "3,077 characters", and the same run then announced "4 findings across
+  // 3 chunks" and "This draft is too large for a word-level diff" off a 6,000 and a 12,000
+  // that had counted the units. Both limits now count what the counter counts.
+  var EMO2 = '😀';
+  function rep2(str, n) { return new Array(n + 1).join(str); }
+
+  eq('the shipped limits are the ones this group drives',
+     [P.CHUNK_THRESHOLD, P.DIFF_CHAR_LIMIT], [6000, 12000]);
+
+  // --- codePointCount agrees with the array it replaces -------------------
+  [['', 0], ['abc', 3], ['é', 1], ['é', 2], [EMO2, 1], [rep2(EMO2, 7), 7],
+   ['a' + EMO2 + 'b', 3], ['\ud83d', 1], [EMO2 + '\ud83d', 2],
+   ['👨‍👩‍👧', 5]].forEach(function (row) {
+    record('codePointCount counts ' + JSON.stringify(row[0]) + ' as ' + row[1],
+           P.codePointCount(row[0]) === row[1], row[1], P.codePointCount(row[0]));
+  });
+  eq('a missing value counts as nothing',
+     [P.codePointCount(null), P.codePointCount(undefined)], [0, 0]);
+  eq('the counter under the box and the limits count with the same function',
+     P.counterLabel(rep2(EMO2, 3000)),
+     '3,000 characters');
+  // stopAt is the reason a limit test does not walk a whole paste. It stops at the number
+  // asked for and never above it.
+  eq('the walk stops at the number the caller asked for',
+     [P.codePointCount(rep2('a', 100000), 7), P.codePointCount('abc', 99)], [7, 3]);
+
+  // --- ASCII is unchanged, which is the point ----------------------------
+  // For pure ASCII a code point is a UTF-16 unit, so the migration must be invisible at
+  // the boundary. These assert the new predicate against the arithmetic the old one did.
+  [5998, 5999, 6000, 6001, 6002].forEach(function (n) {
+    var t = rep2('a', n);
+    record('ASCII ' + n + ' characters vs the 6,000 chunk threshold',
+           P.longerThan(t, P.CHUNK_THRESHOLD) === (n > 6000) &&
+           P.longerThan(t, P.CHUNK_THRESHOLD) === (t.length > P.CHUNK_THRESHOLD),
+           n > 6000, P.longerThan(t, P.CHUNK_THRESHOLD));
+  });
+  [[5999, 6000], [6000, 6000], [6000, 6001], [6500, 6500], [12000, 0], [12000, 1],
+   [13000, 0], [0, 13000]].forEach(function (pair) {
+    var a = rep2('a', pair[0]), b = rep2('b', pair[1]);
+    var want = (pair[0] + pair[1]) > 12000;
+    record('ASCII ' + pair[0] + ' + ' + pair[1] + ' vs the 12,000 diff limit',
+           P.pairLongerThan(a, b, P.DIFF_CHAR_LIMIT) === want &&
+           P.pairLongerThan(a, b, P.DIFF_CHAR_LIMIT) === ((a.length + b.length) > 12000),
+           want, P.pairLongerThan(a, b, P.DIFF_CHAR_LIMIT));
+  });
+
+  // --- astral text is counted, not doubled -------------------------------
+  [[2999, false], [3000, false], [5999, false], [6000, false], [6001, true],
+   [6002, true]].forEach(function (row) {
+    var t = rep2(EMO2, row[0]);
+    record(row[0] + ' emoji (' + t.length + ' UTF-16 units) is chunked: ' + row[1],
+           P.longerThan(t, P.CHUNK_THRESHOLD) === row[1], row[1],
+           P.longerThan(t, P.CHUNK_THRESHOLD));
+  });
+  ok('one character over the chunk line is over it whatever it is made of',
+     P.longerThan('x' + rep2(EMO2, 6000), P.CHUNK_THRESHOLD) === true &&
+     P.longerThan(rep2(EMO2, 6000), P.CHUNK_THRESHOLD) === false);
+  [[5999, false], [6000, false], [6001, true]].forEach(function (row) {
+    var t = rep2(EMO2, row[0]);
+    record('a pair of ' + row[0] + '-emoji drafts is past the diff limit: ' + row[1],
+           P.pairLongerThan(t, t, P.DIFF_CHAR_LIMIT) === row[1], row[1],
+           P.pairLongerThan(t, t, P.DIFF_CHAR_LIMIT));
+  });
+  ok('the pair limit counts the two drafts as one length, not each on its own',
+     P.pairLongerThan(rep2(EMO2, 11000), rep2(EMO2, 1000), P.DIFF_CHAR_LIMIT) === false &&
+     P.pairLongerThan(rep2(EMO2, 11000), rep2(EMO2, 1001), P.DIFF_CHAR_LIMIT) === true);
+
+  // --- the paste from the report -----------------------------------------
+  var REPRO = 'We utilise a holistic framework to leverage synergies at this point in time. ' +
+              rep2(EMO2, 3000);
+  eq('the reported paste is 6,077 UTF-16 units and 3,077 characters',
+     [REPRO.length, P.codePointCount(REPRO)], [6077, 3077]);
+  eq('the counter under the box calls it 3,077 characters',
+     P.counterLabel(REPRO), '3,077 characters');
+  ok('so it is not chunked, and the page no longer announces chunks for it',
+     P.longerThan(REPRO, P.CHUNK_THRESHOLD) === false);
+  ok('and it is not too large for a word-level diff against itself',
+     P.pairLongerThan(REPRO, REPRO, P.DIFF_CHAR_LIMIT) === false);
+  ok('the same paste on the old unit arithmetic would have been both',
+     REPRO.length > P.CHUNK_THRESHOLD && (REPRO.length * 2) > P.DIFF_CHAR_LIMIT);
+  // 3,077 characters of ASCII is neither, which is the agreement being asserted.
+  ok('3,077 ASCII characters are neither, as the counter implies',
+     P.longerThan(rep2('a', 3077), P.CHUNK_THRESHOLD) === false &&
+     P.pairLongerThan(rep2('a', 3077), rep2('a', 3077), P.DIFF_CHAR_LIMIT) === false);
+
+  // --- a limit test costs the limit, not the paste ------------------------
+  // codePoints() builds one string per character; a ten-megabyte paste through it is ten
+  // million allocations on a keystroke. The count walks and the limit tests stop early.
+  var HUGE = rep2('a', 10000000);
+  /* Warm the path, not the input. join() hands back a rope; the first indexed read of it
+     flattens ten megabytes, which is an artifact of how this test built the string and not
+     of the limit test — a paste out of a textarea is flat already. */
+  P.longerThan('abc', 2); P.pairLongerThan('abc', 'd', 2);
+  P.codePointCount(HUGE, 2);
+  var ht0 = performance.now();
+  var hugeChunked = P.longerThan(HUGE, P.CHUNK_THRESHOLD);
+  var hugeDiff = P.pairLongerThan(HUGE, HUGE, P.DIFF_CHAR_LIMIT);
+  var hugeLimitMs = performance.now() - ht0;
+  record('both limit tests on a 10,000,000-character paste under 5 ms',
+         hugeLimitMs < 5, '< 5 ms', hugeLimitMs.toFixed(3) + ' ms');
+  ok('and they still answer correctly', hugeChunked === true && hugeDiff === true);
+  var ct0 = performance.now();
+  var hugeLabel = P.counterLabel(HUGE);
+  var hugeCounterMs = performance.now() - ct0;
+  record('the counter under the box on the same paste under 250 ms',
+         hugeCounterMs < 250, '< 250 ms', hugeCounterMs.toFixed(1) + ' ms');
+  eq('and it says what it should', hugeLabel, '10,000,000 characters');
 
   /* ==================================================================== */
   g('performance');

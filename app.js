@@ -17,6 +17,11 @@
   var FINDINGS_KEEP_CAP = 3000;      /* how many finding objects a pass holds on to */
   var DIFF_CHAR_LIMIT = 12000;       /* above this the word diff is skipped, and says so */
   var CHUNK_THRESHOLD = 6000;        /* text longer than this is critiqued in chunks */
+  /* Both are characters, counted the way the counter under the box counts and the way the
+     display caps above cut: a code point, not the UTF-16 unit it is stored in. They used
+     to be unit lengths, so one paste could be told two different things in one word —
+     "3,077 characters" under the box, then "4 findings across 3 chunks" and "too large for
+     a word-level diff" from a 6,000 and a 12,000 that had counted 6,077. */
   var CHUNK_TARGET = 3000;           /* chunk size, in characters */
   var SLICE_BUDGET_MS = 12;          /* work this long, then hand the frame back */
   var QUOTE_DISPLAY_CHARS = 400;
@@ -142,6 +147,46 @@
       i++;
     }
     return out;
+  }
+
+  /* The same count without the array. codePoints exists to be sliced; a limit only needs
+     the number, and the counter under the box recomputes it on every keystroke, where
+     allocating one string per character of a ten-megabyte paste is a cost with nothing to
+     show for it. `stopAt` ends the walk as soon as the count reaches the number the caller
+     is comparing against, so a limit test costs the limit and not the paste. */
+  function codePointCount(s, stopAt) {
+    var t = String(s == null ? '' : s), n = 0, i = 0, len = t.length, code, next;
+    while (i < len) {
+      code = t.charCodeAt(i);
+      if (code >= 0xd800 && code <= 0xdbff && i + 1 < len) {
+        next = t.charCodeAt(i + 1);
+        if (next >= 0xdc00 && next <= 0xdfff) i++;
+      }
+      n++; i++;
+      if (stopAt !== undefined && n >= stopAt) return n;
+    }
+    return n;
+  }
+
+  /* Is this text longer than `limit` characters? A string is never fewer UTF-16 units than
+     it is code points, so one whose unit length is within the limit is within it in
+     characters too and is answered without a walk at all. Pure ASCII takes that branch
+     every time, which is why the thresholds behave identically on ASCII: 5,999 / 6,000 /
+     6,001 units of ASCII are 5,999 / 6,000 / 6,001 characters. */
+  function longerThan(text, limit) {
+    var t = String(text == null ? '' : text);
+    return t.length > limit && codePointCount(t, limit + 1) > limit;
+  }
+
+  /* The diff limit is on the two drafts together, so the pair is counted as one length.
+     The second walk is given only the budget the first left, and neither runs when the
+     units already fit. */
+  function pairLongerThan(a, b, limit) {
+    var x = String(a == null ? '' : a), y = String(b == null ? '' : b);
+    if (x.length + y.length <= limit) return false;
+    var n = codePointCount(x, limit + 1);
+    if (n > limit) return true;
+    return n + codePointCount(y, limit + 1 - n) > limit;
   }
 
   /* The cut and both numbers beside it count the way clipApiError already counts, and for
@@ -321,7 +366,7 @@
      a paste of 50 emoji is 50 characters, and used to read "100 characters". The label is
      its own function so the suite can read it with no page around it. */
   function counterLabel(value) {
-    var n = codePoints(String(value == null ? '' : value)).length;
+    var n = codePointCount(value);
     return n === 1 ? '1 character' : count(n) + ' characters';
   }
 
@@ -568,7 +613,7 @@
     label(p, 'Pass ' + index + ' · Draft ' + index);
 
     var canDiff = typeof CL.diffWords === 'function' &&
-      (before.length + after.length) <= DIFF_CHAR_LIMIT;
+      !pairLongerThan(before, after, DIFF_CHAR_LIMIT);
 
     var body = el('div');
     var controls = el('div', 'diff-controls');
@@ -1507,7 +1552,7 @@
       return token === state.runToken && !(state.aborter && state.aborter.signal.aborted);
     };
 
-    var chunked = !live && raw.length > CHUNK_THRESHOLD;
+    var chunked = !live && longerThan(raw, CHUNK_THRESHOLD);
     var record = {
       engineLabel: live ? 'live (' + model + ')' : 'offline rule-based critic',
       draft0: raw, metrics0: null, passes: [], converged: false, cappedClean: false, finalText: raw,
@@ -1547,7 +1592,7 @@
       if (chunked) {
         var n = splitChunks(raw, CHUNK_TARGET).length;
         record.chunks = n;
-        renderNote('This text is ' + count(raw.length) + ' characters, so each pass critiques it in ' +
+        renderNote('This text is ' + count(codePointCount(raw)) + ' characters, so each pass critiques it in ' +
           count(n) + ' chunks of about ' + count(CHUNK_TARGET) + ' characters, cut at a sentence ' +
           'end where there is one and at whitespace otherwise, never mid-word. Each chunk is ' +
           'critiqued with the text that comes before it, so a sentence that starts a chunk is ' +
@@ -1645,6 +1690,9 @@
     shortenForDisplay: shortenForDisplay,
     shortenQuoteForDisplay: shortenQuoteForDisplay,
     counterLabel: counterLabel,
+    codePointCount: codePointCount,
+    longerThan: longerThan,
+    pairLongerThan: pairLongerThan,
     isBlankInput: isBlankInput,
     appliedTotal: appliedTotal,
     verdictLine: verdictLine,
@@ -1653,7 +1701,9 @@
     FINDINGS_OPEN_CAP: FINDINGS_OPEN_CAP,
     API_ERROR_CHARS: API_ERROR_CHARS,
     DRAFT_DISPLAY_CHARS: DRAFT_DISPLAY_CHARS,
-    QUOTE_DISPLAY_CHARS: QUOTE_DISPLAY_CHARS
+    QUOTE_DISPLAY_CHARS: QUOTE_DISPLAY_CHARS,
+    CHUNK_THRESHOLD: CHUNK_THRESHOLD,
+    DIFF_CHAR_LIMIT: DIFF_CHAR_LIMIT
   };
 
   /* ---------- wiring ----------
