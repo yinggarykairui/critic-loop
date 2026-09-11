@@ -47,10 +47,11 @@ tests.html   critic.js's own suite in a page. Every rule gets a case that fires 
 
 The engine is separated from the page precisely so `tests.html` can drive it without a DOM, and
 so live mode is a swap of one async function rather than a second code path through the UI. app.js
-adds exactly one global, `window.CriticLoopPage`, and it carries twenty-seven keys: `splitChunks`,
+adds exactly one global, `window.CriticLoopPage`, and it carries twenty-eight keys: `splitChunks`,
 `meanChunkChars`, `chunkNote`,
 `openFlags`, `isApplicable`, `renderFinding`, `expandAllControl`, `metricsStrip`, `metricLine`,
-`shortenForDisplay`, `shortenQuoteForDisplay`, `counterLabel`, `codePointCount`, `longerThan`,
+`shortenForDisplay`, `shortenQuoteForDisplay`, `counterLabel`, `liveOverLimitMessage`,
+`codePointCount`, `longerThan`,
 `pairLongerThan`, `isBlankInput`, `appliedTotal`, `verdictLine`, `apiErrorMessage`, `METRIC_ROWS`,
 `METRIC_SEP`, `FINDINGS_OPEN_CAP`, `API_ERROR_CHARS`, `DRAFT_DISPLAY_CHARS`, `QUOTE_DISPLAY_CHARS`,
 `CHUNK_THRESHOLD`, `DIFF_CHAR_LIMIT`. It was one key when this paragraph was written, was widened in

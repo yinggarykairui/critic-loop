@@ -157,7 +157,8 @@
       'appliedTotal', 'codePointCount', 'counterLabel', 'expandAllControl', 'isApplicable',
       'isBlankInput', 'longerThan', 'metricLine', 'metricsStrip', 'openFlags',
       'pairLongerThan', 'renderFinding', 'shortenForDisplay', 'shortenQuoteForDisplay',
-      'splitChunks', 'verdictLine', 'chunkNote', 'meanChunkChars'].sort());
+      'splitChunks', 'verdictLine', 'chunkNote', 'meanChunkChars',
+      'liveOverLimitMessage'].sort());
   ok('app.js loaded without a page around it',
      window.CriticLoopPage && typeof window.CriticLoopPage.splitChunks === 'function');
   eq('the one global exports exactly the documented surface',
@@ -3319,6 +3320,85 @@
      'unchunked one does. No text is dropped, but a finding never spans a chunk boundary.');
   ok('a one-chunk text would state its own length as the size',
      unComma(NOTE_HEAD_RE.exec(P.chunkNote('hello there', [{ text: 'hello there' }]))[3]) === 11);
+
+  /* ==================================================================== */
+  g('C19 the live-mode ceiling names its own unit');
+  // Live mode refuses a draft over 12,000 UTF-16 units, and the test is on units on
+  // purpose: the number stands in for what the request sends to api.anthropic.com, and
+  // moving it to code points would raise what is actually sent. What was wrong was the
+  // wording. 6,500 emoji is 13,000 units, and the page said "That is 13,000 characters"
+  // in a status line under a counter reading "6,500 characters" — the same draft, the
+  // same word, two numbers. The message now states both numbers in one named unit, and
+  // says why a draft the counter calls 6,500 characters is over a 12,000 cap.
+  var LIVE_CAP = 12000;
+  function liveNumbers(msg) {
+    // "UTF-16" is a unit's name, not one of the message's counts.
+    return (msg.replace(/UTF-16/g, 'UTF').match(/[\d,]*\d/g) || []).map(unComma);
+  }
+  function thousands(n) { return Number(n).toLocaleString('en-US'); }
+
+  var OVER_EMOJI = rep3(EMO3, 6500);
+  var overEmojiMsg = P.liveOverLimitMessage(OVER_EMOJI);
+  eq('the draft this group drives is 13,000 units and 6,500 characters',
+     [OVER_EMOJI.length, P.codePointCount(OVER_EMOJI)], [13000, 6500]);
+  ok('it is over the ceiling the page ships', OVER_EMOJI.length > LIVE_CAP);
+  ok('the message names the unit it is counting in',
+     overEmojiMsg.indexOf('UTF-16 units') !== -1);
+  ok('it states the draft’s size in that unit',
+     overEmojiMsg.indexOf('That draft is 13,000 UTF-16 units') === 0);
+  ok('and the cap in the same unit, as a count of the same things',
+     overEmojiMsg.indexOf('live mode sends at most 12,000 of them') !== -1);
+  eq('so the two numbers it leads with are comparable, and the larger is the draft',
+     liveNumbers(overEmojiMsg).slice(0, 2), [13000, 12000]);
+  ok('it never calls the unit length "characters" — that word belongs to the counter',
+     overEmojiMsg.indexOf('13,000 characters') === -1);
+  ok('it says why a draft the counter calls 6,500 characters is over a 12,000 cap',
+     overEmojiMsg.indexOf('the counter calls 6,500 characters') !== -1 &&
+     overEmojiMsg.indexOf('where an emoji is two units') !== -1);
+  ok('the counter and the message agree about the draft, each in its own unit',
+     overEmojiMsg.indexOf(P.counterLabel(OVER_EMOJI)) !== -1);
+  ok('and it still says what to do about it',
+     overEmojiMsg.indexOf('Trim it, or use the offline critic.') ===
+     overEmojiMsg.length - 'Trim it, or use the offline critic.'.length);
+
+  // --- ASCII, where there is no gap to explain ------------------------------
+  var OVER_ASCII = rep3('a', 13000);
+  var overAsciiMsg = P.liveOverLimitMessage(OVER_ASCII);
+  eq('an ASCII draft over the cap states the same two numbers',
+     liveNumbers(overAsciiMsg).slice(0, 2), [13000, 12000]);
+  ok('and both are the number the counter would give as well',
+     P.counterLabel(OVER_ASCII) === '13,000 characters' &&
+     P.codePointCount(OVER_ASCII) === OVER_ASCII.length);
+  ok('so the clause about emoji is not printed: there is no gap to explain',
+     overAsciiMsg.indexOf('emoji') === -1 &&
+     overAsciiMsg === 'That draft is 13,000 UTF-16 units, and live mode sends at most ' +
+       '12,000 of them. Trim it, or use the offline critic.');
+
+  // --- the shape of it, over every draft that trips the cap -----------------
+  [['the emoji paste', OVER_EMOJI], ['ASCII', OVER_ASCII],
+   ['one unit over', rep3('a', 12001)],
+   ['one emoji over', rep3('a', 11999) + EMO3],
+   ['a ZWJ family', rep3('👨‍👩‍👧', 2000)]].forEach(function (row) {
+    var m = P.liveOverLimitMessage(row[1]);
+    var nums = liveNumbers(m);
+    record('the message on ' + row[0] + ' leads with the draft’s unit length',
+           nums[0] === row[1].length, row[1].length, nums[0]);
+    record('the message on ' + row[0] + ' gives the cap second, in that same unit',
+           nums[1] === LIVE_CAP, LIVE_CAP, nums[1]);
+    record('the message on ' + row[0] + ' is only over the cap because those two compare',
+           nums[0] > nums[1], 'draft > cap', nums[0] + ' vs ' + nums[1]);
+    record('the message on ' + row[0] + ' never prints the unit count as "characters"',
+           m.indexOf(thousands(row[1].length) + ' characters') === -1,
+           'no such phrase', m.slice(0, 80));
+    record('every "characters" in the message on ' + row[0] + ' is a code-point count',
+           (m.match(/[\d,]+(?= characters)/g) || []).every(function (x) {
+             return unComma(x) === P.codePointCount(row[1]);
+           }), 'code points', m);
+  });
+  eq('a draft that is not over the cap is never handed to it by the page, but it still reads',
+     P.liveOverLimitMessage(''),
+     'That draft is 0 UTF-16 units, and live mode sends at most 12,000 of them. ' +
+     'Trim it, or use the offline critic.');
 
   /* ==================================================================== */
   g('performance');

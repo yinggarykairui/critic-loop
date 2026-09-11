@@ -25,6 +25,9 @@
   var CHUNK_TARGET = 3000;           /* chunk size, in characters */
   var SLICE_BUDGET_MS = 12;          /* work this long, then hand the frame back */
   var QUOTE_DISPLAY_CHARS = 400;
+  /* The one limit on this page that is not in the counter's unit: UTF-16 units, because
+     it stands in for what the request sends to api.anthropic.com. liveOverLimitMessage
+     is where that is said out loud. */
   var LIVE_MAX_INPUT = 12000;
 
   var $ = function (id) { return document.getElementById(id); };
@@ -379,6 +382,23 @@
   function counterLabel(value) {
     var n = codePointCount(value);
     return n === 1 ? '1 character' : count(n) + ' characters';
+  }
+
+  /* Live mode's ceiling is measured in the units a draft is stored in, not the characters
+     the counter counts, and it has to be: it is a proxy for what goes over the wire. So a
+     message that called those units "characters" contradicted the counter directly above
+     the box in one word — "That is 13,000 characters" under "6,500 characters". Both
+     numbers here are in one unit and the unit is named. The clause explaining the gap is
+     printed only when there is a gap: on ASCII the two counts are the same number. */
+  function liveOverLimitMessage(raw) {
+    var t = String(raw == null ? '' : raw);
+    var msg = 'That draft is ' + count(t.length) + ' UTF-16 units, and live mode sends at most ' +
+      count(LIVE_MAX_INPUT) + ' of them';
+    if (codePointCount(t) !== t.length) {
+      msg += ' — the cap counts what goes over the wire, where an emoji is two units, so a ' +
+        'draft the counter calls ' + counterLabel(t) + ' can still be over it';
+    }
+    return msg + '. Trim it, or use the offline critic.';
   }
 
   function updateCounter() {
@@ -1594,8 +1614,7 @@
       return;
     }
     if (live && raw.length > LIVE_MAX_INPUT) {
-      setStatus('That is ' + count(raw.length) + ' characters. Live mode sends at most ' +
-        count(LIVE_MAX_INPUT) + '. Trim it, or use the offline critic.', 'error');
+      setStatus(liveOverLimitMessage(raw), 'error');
       return;
     }
 
@@ -1746,6 +1765,7 @@
     shortenForDisplay: shortenForDisplay,
     shortenQuoteForDisplay: shortenQuoteForDisplay,
     counterLabel: counterLabel,
+    liveOverLimitMessage: liveOverLimitMessage,
     codePointCount: codePointCount,
     longerThan: longerThan,
     pairLongerThan: pairLongerThan,
