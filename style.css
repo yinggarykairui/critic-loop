@@ -150,7 +150,11 @@ textarea.is-locked { background: var(--disabled-bg); cursor: default; }
 
 .counter { font-size: 0.8rem; color: var(--muted); margin: 0.35rem 0 0.9rem; }
 
-.samples { margin-bottom: 0.9rem; }
+/* The label belongs to the buttons under it, not to the Run button over it. With no top
+   margin the two were touching — 0 px from the control it does not label, 5.6 px from the
+   ones it does — so proximity said the opposite of what the markup says. The clearance is
+   the one the narrow layout already gave it. */
+.samples { margin: 1.4rem 0 0.9rem; }
 .samples-label {
   display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.35rem;
 }
