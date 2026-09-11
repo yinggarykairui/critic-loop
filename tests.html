@@ -153,8 +153,8 @@
   eq('and it exports exactly the page surface this suite drives',
      Object.keys(window.CriticLoopPage || {}).sort(),
      ['API_ERROR_CHARS', 'FINDINGS_OPEN_CAP', 'METRIC_ROWS', 'apiErrorMessage',
-      'appliedTotal', 'expandAllControl', 'isApplicable', 'metricsStrip', 'openFlags',
-      'renderFinding', 'splitChunks', 'verdictLine'].sort());
+      'appliedTotal', 'expandAllControl', 'isApplicable', 'metricLine', 'metricsStrip',
+      'openFlags', 'renderFinding', 'splitChunks', 'verdictLine'].sort());
   ok('app.js loaded without a page around it',
      window.CriticLoopPage && typeof window.CriticLoopPage.splitChunks === 'function');
   eq('the one global exports exactly the documented surface',
@@ -2714,6 +2714,94 @@
   eq('every chunk starts where the one before it ended',
      AC.map(function (c) { return c.start; }),
      [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22]);
+
+  /* ==================================================================== */
+  g('C13 the exported line and the strip say the same thing');
+  // The Markdown export and the on-screen strip are two renderings of one metrics record.
+  // The export used to print neither the mean word column nor the strip's suppression
+  // rule: on Almost clean it read "words 60, sentences 4, mean sentence 15, hedges 0" both
+  // before and after a pass the same file records as "Applied: 3 of 3", while the strip
+  // beside it read "mean word (chars) 4.4 → 4.2 (−0.2)". These assertions hold the two
+  // renderings to the same columns and the same rounding.
+  var ML = P.metricLine;
+  function stripCols(m, prev) {
+    var nodes = P.metricsStrip(m, prev, null).querySelectorAll('.metric-name');
+    var out = [];
+    for (var i = 0; i < nodes.length; i++) out.push(nodes[i].textContent.replace(/\s+$/, ''));
+    return out;
+  }
+  function lineCols(m, prev) {
+    return ML(m, prev).split(', ').map(function (part) {
+      return part.replace(/ [-−+±0-9.,→ ]+$/, '');
+    });
+  }
+
+  var ALMOST_BEFORE = { words: 60, sentences: 4, meanSentenceLength: 15, meanWordLength: 4.44,
+                        hedges: 0 };
+  var ALMOST_AFTER = { words: 60, sentences: 4, meanSentenceLength: 15, meanWordLength: 4.24,
+                       hedges: 0 };
+  eq('the exported line carries the mean word column',
+     ML(ALMOST_BEFORE, null),
+     'words 60, sentences 4, mean sentence 15.0, mean word 4.4, hedges 0');
+  ok('so a pass that only moved mean word no longer exports twice the same line',
+     ML(ALMOST_BEFORE, null) !== ML(ALMOST_AFTER, ALMOST_BEFORE));
+  eq('and the number it moved to is the one the strip prints',
+     ML(ALMOST_AFTER, ALMOST_BEFORE),
+     'words 60, sentences 4, mean sentence 15.0, mean word 4.2, hedges 0');
+
+  // Both means keep their decimal, the way the strip's mean columns do — num1, not num.
+  eq('a mean that lands on a whole number keeps its decimal in the export',
+     ML({ words: 20, sentences: 2, meanSentenceLength: 10, meanWordLength: 5, hedges: 0 }, null),
+     'words 20, sentences 2, mean sentence 10.0, mean word 5.0, hedges 0');
+  [[0.15, '0.2'], [0.35, '0.4'], [1.15, '1.2'], [9.95, '10.0'], [4.96, '5.0'], [5.04, '5.0']]
+    .forEach(function (row) {
+      var txt = ML({ words: 10, sentences: 2, meanSentenceLength: 5, meanWordLength: row[0],
+                     hedges: 0 }, null);
+      record('the export rounds a mean of ' + row[0] + ' to ' + row[1],
+             txt.indexOf('mean word ' + row[1]) >= 0, 'mean word ' + row[1], txt);
+    });
+
+  // The suppression rule the README states: mean sentence prints when a draft has more than
+  // one sentence. Bloated corporate is one sentence throughout, and every exported line for
+  // it used to repeat the word count in a second column.
+  var CORP0 = { words: 75, sentences: 1, meanSentenceLength: 75, meanWordLength: 4.72, hedges: 0 };
+  var CORP3 = { words: 51, sentences: 1, meanSentenceLength: 51, meanWordLength: 4.94, hedges: 0 };
+  eq('a one-sentence draft drops mean sentence from the export too',
+     ML(CORP0, null), 'words 75, sentences 1, mean word 4.7, hedges 0');
+  eq('the strip drops the same column for the same record',
+     stripCols(CORP0, null), ['words', 'sentences', 'mean word (chars)', 'hedges']);
+  eq('and the two renderings list the same columns in the same order',
+     lineCols(CORP0, null), ['words', 'sentences', 'mean word', 'hedges']);
+  eq('a draft of more than one sentence keeps it',
+     lineCols(ALMOST_BEFORE, null),
+     ['words', 'sentences', 'mean sentence', 'mean word', 'hedges']);
+  eq('the strip keeps it for the same record',
+     stripCols(ALMOST_BEFORE, null),
+     ['words', 'sentences', 'mean sentence (words)', 'mean word (chars)', 'hedges']);
+
+  // The pair rule: the column is dropped only where every draft the line covers is one
+  // sentence, which is exactly oneSentenceThroughout — the test the strip already uses.
+  var THREE = { words: 30, sentences: 3, meanSentenceLength: 10, meanWordLength: 4.5, hedges: 0 };
+  ok('one sentence measured against a three-sentence draft keeps the column',
+     ML(CORP0, THREE).indexOf('mean sentence') >= 0);
+  ok('and the strip agrees for that pair',
+     stripCols(CORP0, THREE).indexOf('mean sentence (words)') >= 0);
+  ok('one sentence against one sentence drops it',
+     ML(CORP0, CORP3).indexOf('mean sentence') === -1);
+  ok('a three-sentence draft against one sentence keeps it',
+     ML(THREE, CORP0).indexOf('mean sentence') >= 0);
+  // The footer prints both halves of the same pair, so the halves must agree with each
+  // other: the column is in both or in neither, never in one.
+  [[CORP0, CORP3], [ALMOST_BEFORE, ALMOST_AFTER], [CORP0, THREE], [THREE, CORP0]]
+    .forEach(function (pair, i) {
+      var left = ML(pair[0], pair[1]).indexOf('mean sentence') >= 0;
+      var right = ML(pair[1], pair[0]).indexOf('mean sentence') >= 0;
+      record('footer pair ' + i + ': both halves print the same columns', left === right,
+             'same', left + ' / ' + right);
+    });
+
+  eq('a missing metrics record still exports the one word it always did', ML(null, null), 'n/a');
+  eq('and an absent prev is the same as no prev', ML(ALMOST_BEFORE), ML(ALMOST_BEFORE, null));
 
   /* ==================================================================== */
   g('performance');

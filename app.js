@@ -871,8 +871,11 @@
     out.push('## Draft 0');
     out.push('');
     out.push(mdFence(t.draft0));
-    out.push('Metrics: ' + metricLine(t.metrics0));
+    out.push('Metrics: ' + metricLine(t.metrics0, null));
     out.push('');
+    /* Each pass's strip on screen is metricsStrip(after, before): the line for that draft is
+       given the same before, so the two drop the mean-sentence column together. */
+    var prevM = t.metrics0;
     for (var i = 0; i < t.passes.length; i++) {
       var p = t.passes[i];
       out.push('## Critique ' + p.index + ' — ' + p.lensName);
@@ -914,16 +917,20 @@
         } else {
           out.push(mdFence(p.after));
         }
-        out.push('Metrics: ' + metricLine(p.metricsAfter));
+        out.push('Metrics: ' + metricLine(p.metricsAfter, prevM));
         out.push('');
       }
+      if (p.metricsAfter) prevM = p.metricsAfter;
     }
     out.push('## Result');
     out.push('');
     out.push(verdictLine(t));
     out.push('');
     out.push(mdFence(t.finalText));
-    out.push('Metrics, draft 0 → final: ' + metricLine(t.metrics0) + ' → ' + metricLine(finalMetrics(t)));
+    /* The footer is one row covering both drafts, like the final strip: each half is given
+       the other, so the pair decides the mean-sentence column once and the halves match. */
+    var mFin = finalMetrics(t);
+    out.push('Metrics, draft 0 → final: ' + metricLine(t.metrics0, mFin) + ' → ' + metricLine(mFin, t.metrics0));
     out.push('');
     out.push('No API key is included in this file.');
     return out.join('\n');
@@ -935,10 +942,21 @@
     return m;
   }
 
-  function metricLine(m) {
+  /* The exported line is the on-screen strip written out in prose, so it prints the same
+     columns under the same rules or the file and the page disagree about the same run. Both
+     means keep their decimal (num1): mean word is where a clarity pass shows up when the
+     word count does not move, and leaving it out made the Almost clean export read
+     identically before and after a pass the same file records as "Applied: 3 of 3". Mean
+     sentence is dropped exactly where the strip drops it — oneSentenceThroughout, against
+     the same prev the strip was given — because for a one-sentence draft it is the word
+     count again, in a second column. */
+  function metricLine(m, prev) {
     if (!m) return 'n/a';
-    return 'words ' + num(m.words) + ', sentences ' + num(m.sentences) +
-      ', mean sentence ' + num(m.meanSentenceLength) + ', hedges ' + num(m.hedges);
+    var parts = ['words ' + num(m.words), 'sentences ' + num(m.sentences)];
+    if (!oneSentenceThroughout(m, prev)) parts.push('mean sentence ' + num1(m.meanSentenceLength));
+    parts.push('mean word ' + num1(m.meanWordLength));
+    parts.push('hedges ' + num(m.hedges));
+    return parts.join(', ');
   }
 
   function exportMarkdown(note) {
@@ -1574,6 +1592,7 @@
     renderFinding: renderFinding,
     expandAllControl: expandAllControl,
     metricsStrip: metricsStrip,
+    metricLine: metricLine,
     appliedTotal: appliedTotal,
     verdictLine: verdictLine,
     apiErrorMessage: apiErrorMessage,
