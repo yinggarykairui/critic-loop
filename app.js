@@ -95,9 +95,13 @@
     return Math.round(n * 10) / 10;
   }
 
+  /* Thousands are grouped wherever the strip prints a number. count() grouped and num() did
+     not, so a 43,299-character paste rendered "edits applied 1,000 · words 7400 → 5100
+     (−2300)" — two thousands conventions in one row, on numbers read side by side. num is
+     count applied to the snapped value: one grouping rule, in one place. */
   function num(n) {
     if (typeof n !== 'number' || !isFinite(n)) return '0';
-    return String(snap1(n));
+    return count(snap1(n));
   }
 
   function count(n) { return Number(n || 0).toLocaleString('en-US'); }
@@ -108,8 +112,13 @@
   function num1(n) {
     if (typeof n !== 'number' || !isFinite(n)) return '0.0';
     /* toFixed alone is not this rounding: (0.15).toFixed(1) is "0.1", because 0.15 is
-       stored a hair below the midpoint. The strip rounds a half up, everywhere. */
-    return snap1(n).toFixed(1);
+       stored a hair below the midpoint. The strip rounds a half up, everywhere, and snap1
+       has already done it here — so the format below only has to print one decimal and
+       group the thousands, which is the same grouping count() and num() use. A mean is a
+       number on the same strip as the counts, and two drafts of 1,200 words each would
+       otherwise print "words 2,400" beside "mean sentence (words) 1200.0". */
+    return snap1(n).toLocaleString('en-US',
+      { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   }
 
   function signed(d, fmt) {

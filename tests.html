@@ -2918,6 +2918,56 @@
   eq('a short ASCII quote is untouched', P.shortenQuoteForDisplay('short', 20).text, 'short');
 
   /* ==================================================================== */
+  g('C15 one thousands convention per strip');
+  // count() grouped and num() did not, so the pass-3 strip of the corporate sample pasted
+  // 100 times (43,299 characters) read "edits applied 1,000 · words 7400 → 5100 (−2300)":
+  // grouped and ungrouped in the same row, on numbers a reader compares side by side.
+  var BIG_NOW = { words: 5100, sentences: 100, meanSentenceLength: 51, meanWordLength: 4.9,
+                  hedges: 0 };
+  var BIG_WAS = { words: 7400, sentences: 100, meanSentenceLength: 74, meanWordLength: 4.5,
+                  hedges: 0 };
+  var BIG_STRIP = P.metricsStrip(BIG_NOW, BIG_WAS, null, 1000).textContent
+    .replace(/\s+/g, ' ').trim();
+  ok('the edits count is grouped, as it always was',
+     BIG_STRIP.indexOf('edits applied 1,000') >= 0);
+  ok('and the word count beside it is grouped too',
+     BIG_STRIP.indexOf('words 7,400 → 5,100') >= 0);
+  ok('as is the delta between them', BIG_STRIP.indexOf('(−2,300)') >= 0);
+  ok('nothing on that strip is left ungrouped',
+     BIG_STRIP.indexOf('7400') === -1 && BIG_STRIP.indexOf('5100') === -1 &&
+     BIG_STRIP.indexOf('2300') === -1);
+  // A mean is a number on the same strip, and prints under the same rule with its decimal.
+  var BIG_MEAN = P.metricsStrip({ words: 2400, sentences: 2, meanSentenceLength: 1200,
+                                  meanWordLength: 4.5, hedges: 0 }, null, null)
+    .textContent.replace(/\s+/g, ' ').trim();
+  ok('a mean in the thousands groups and keeps its decimal',
+     BIG_MEAN.indexOf('mean sentence (words) 1,200.0') >= 0);
+  ok('beside a word count in the same convention', BIG_MEAN.indexOf('words 2,400') >= 0);
+  // The exported line prints the same numbers in the same shape.
+  eq('the exported line groups what the strip groups',
+     P.metricLine(BIG_NOW, BIG_WAS),
+     'words 5,100, sentences 100, mean sentence 51.0, mean word 4.9, hedges 0');
+  // Under a thousand nothing moves, and a mean keeps the one-decimal form it had.
+  var SMALL = P.metricsStrip({ words: 41, sentences: 2, meanSentenceLength: 20.5,
+                               meanWordLength: 4.94, hedges: 0 },
+                             { words: 40, sentences: 2, meanSentenceLength: 20,
+                               meanWordLength: 5.06, hedges: 2 }, null)
+    .textContent.replace(/\s+/g, ' ').trim();
+  ok('a three-digit count is untouched', SMALL.indexOf('words 40 → 41 (+1)') >= 0);
+  ok('and a small mean still prints as it did',
+     SMALL.indexOf('mean word (chars) 5.1 → 4.9 (−0.2)') >= 0 &&
+     SMALL.indexOf('mean sentence (words) 20.0 → 20.5 (+0.5)') >= 0);
+  // The boundary: 999 stands alone, 1,000 takes a separator.
+  [[999, 'words 999'], [1000, 'words 1,000'], [10000, 'words 10,000'],
+   [1000000, 'words 1,000,000']].forEach(function (row) {
+    var txt = P.metricsStrip({ words: row[0], sentences: 3, meanSentenceLength: 5,
+                               meanWordLength: 4, hedges: 0 }, null, null)
+      .textContent.replace(/\s+/g, ' ');
+    record('a word count of ' + row[0] + ' prints "' + row[1] + '"',
+           txt.indexOf(row[1]) >= 0, row[1], txt);
+  });
+
+  /* ==================================================================== */
   g('performance');
   var PERF = [
     ['one 40,000-char word', 'x'.repeat(40000)],
