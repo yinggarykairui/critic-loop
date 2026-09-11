@@ -154,9 +154,9 @@
      Object.keys(window.CriticLoopPage || {}).sort(),
      ['API_ERROR_CHARS', 'DRAFT_DISPLAY_CHARS', 'FINDINGS_OPEN_CAP', 'METRIC_ROWS',
       'QUOTE_DISPLAY_CHARS', 'apiErrorMessage', 'appliedTotal', 'counterLabel',
-      'expandAllControl', 'isApplicable', 'metricLine', 'metricsStrip', 'openFlags',
-      'renderFinding', 'shortenForDisplay', 'shortenQuoteForDisplay', 'splitChunks',
-      'verdictLine'].sort());
+      'expandAllControl', 'isApplicable', 'isBlankInput', 'metricLine', 'metricsStrip',
+      'openFlags', 'renderFinding', 'shortenForDisplay', 'shortenQuoteForDisplay',
+      'splitChunks', 'verdictLine'].sort());
   ok('app.js loaded without a page around it',
      window.CriticLoopPage && typeof window.CriticLoopPage.splitChunks === 'function');
   eq('the one global exports exactly the documented surface',
@@ -2966,6 +2966,55 @@
     record('a word count of ' + row[0] + ' prints "' + row[1] + '"',
            txt.indexOf(row[1]) >= 0, row[1], txt);
   });
+
+  /* ==================================================================== */
+  g('C16 what counts as an empty box');
+  // Three non-breaking spaces were caught by trim() and answered "Nothing to critique."
+  // Three zero-width spaces were not, and ran a full three-pass critique of nothing that
+  // ended by calling the draft clean: two equally invisible pastes, opposite outcomes.
+  var BLANKS = [
+    ['nothing at all', ''],
+    ['one space', ' '],
+    ['spaces, tabs and newlines', '   \t\n  '],
+    ['three non-breaking spaces', '\u00a0\u00a0\u00a0'],
+    ['three zero-width spaces', '\u200b\u200b\u200b'],
+    ['three zero-width non-joiners', '\u200c\u200c\u200c'],
+    ['three zero-width joiners', '\u200d\u200d\u200d'],
+    ['three byte-order marks', '\ufeff\ufeff\ufeff'],
+    ['left-to-right and right-to-left marks', '\u200e\u200f'],
+    ['a word joiner', '\u2060'],
+    ['soft hyphens', '\u00ad\u00ad'],
+    ['an ideographic space', '\u3000'],
+    ['a line and a paragraph separator', '\u2028\u2029'],
+    ['every invisible kind at once', ' \u00a0\t\u200b\u200c\u200d\ufeff\u2060\n']
+  ];
+  BLANKS.forEach(function (row) {
+    record('an empty box: ' + row[0], P.isBlankInput(row[1]) === true, 'blank', 'ran');
+  });
+  var NOT_BLANK = [
+    ['one letter', 'a'],
+    ['a letter among the invisibles', '\u200b\u00a0a\u200b'],
+    ['a paragraph', 'The parser reads a file.'],
+    ['a zero-width space inside real prose', 'The\u200b implementation was basically robust.'],
+    ['punctuation only', '...!!!'],
+    ['a digit', '0'],
+    ['an emoji', '\ud83d\ude00'],
+    ['CJK', '\u4f60\u597d'],
+    ['a combining mark on a letter', 'e\u0301']
+  ];
+  NOT_BLANK.forEach(function (row) {
+    record('not an empty box: ' + row[0], P.isBlankInput(row[1]) === false, 'runs', 'refused');
+  });
+  ok('a missing value is an empty box', P.isBlankInput(null) && P.isBlankInput(undefined));
+
+  // The test normalises a copy. Nothing else may: what a run critiques is what was pasted,
+  // and the page reads els.input.value again rather than anything this function returned.
+  var KEEP = 'The\u200b implementation\u00a0was basically very robust.';
+  ok('the test is a predicate and hands back no text to run on',
+     typeof P.isBlankInput(KEEP) === 'boolean');
+  // The engine still sees every character of it, invisibles included.
+  eq('the critic counts the pasted text as it was pasted',
+     C.metrics(KEEP).chars, KEEP.length);
 
   /* ==================================================================== */
   g('performance');

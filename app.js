@@ -300,6 +300,23 @@
     return node ? node.textContent.trim() : '';
   }
 
+  /* What counts as an empty box, and nothing else: a run critiques exactly the characters
+     the reader pasted, so this test normalises a copy and never the text itself.
+
+     trim() removes Unicode whitespace, which is why three non-breaking spaces were already
+     caught. It leaves the zero-width and format characters, which are just as invisible:
+     three zero-width spaces ran a full three-pass critique of nothing and reported the
+     draft clean. A box holding nothing a reader can see is empty however that invisibility
+     is spelled — zero-width space, the two joiners, the bidi marks and embeddings, the
+     word joiner, a byte-order mark, a soft hyphen — so they all come out before the test.
+     A zero-width space inside real prose is untouched: it only stops the text being empty,
+     which it does. */
+  var INVISIBLE = /[\s\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u206a-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0]/g;
+
+  function isBlankInput(value) {
+    return String(value == null ? '' : value).replace(INVISIBLE, '') === '';
+  }
+
   /* The counter under the box counts characters the way the three display caps count them:
      a paste of 50 emoji is 50 characters, and used to read "100 characters". The label is
      its own function so the suite can read it with no page around it. */
@@ -1454,7 +1471,7 @@
 
     /* Validate before anything is cleared: a blank box must not destroy a finished run. */
     var raw = els.input.value;
-    if (!raw || !raw.trim()) {
+    if (isBlankInput(raw)) {
       setStatus('Nothing to critique. Paste a paragraph or load a sample first. The transcript is untouched.', 'error');
       els.input.focus();
       return;
@@ -1628,6 +1645,7 @@
     shortenForDisplay: shortenForDisplay,
     shortenQuoteForDisplay: shortenQuoteForDisplay,
     counterLabel: counterLabel,
+    isBlankInput: isBlankInput,
     appliedTotal: appliedTotal,
     verdictLine: verdictLine,
     apiErrorMessage: apiErrorMessage,
