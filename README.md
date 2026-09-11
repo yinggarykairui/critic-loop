@@ -47,7 +47,7 @@ system prompts and the findings flow through the same render path, quotes locate
 same way. The key is read from the field on each run, sent only to `api.anthropic.com`, stored
 nowhere, and never written into the exported transcript.
 
-`tests.html` is the suite: 1,718 assertions, run it by opening the file. Most of them are the
+`tests.html` is the suite: 1,789 assertions, run it by opening the file. Most of them are the
 engine's. The rest drive the page's own decisions out of `app.js` rather than a copy of them — which
 findings a panel opens, what the pointer tag says, where a chunk may be cut, what the metrics strip
 prints, what the error-body cap does at 299, 300 and 301 characters — because a copy of a function
