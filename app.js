@@ -1348,6 +1348,36 @@
     return out;
   }
 
+  /* The note's three numbers are one piece of arithmetic — total, count, size — so they
+     have to be counted in one unit. CHUNK_TARGET is not that unit: the splitter cuts in
+     UTF-16 units, deliberately, while the total printed beside it counts code points. A
+     note that printed the target did not divide — 6,001 characters "in 4 chunks of about
+     3,000 characters" is 12,000 of chunk against a 6,001 total. So the size the note
+     reports is the mean of the chunks the splitter actually returned, counted the way the
+     total is counted. It is a mean and the note says "about": a last chunk is whatever is
+     left, and on a text that ends just past a cut it is short. */
+  function meanChunkChars(chunks) {
+    if (!chunks || !chunks.length) return 0;
+    var total = 0;
+    for (var i = 0; i < chunks.length; i++) total += codePointCount(chunks[i].text);
+    return Math.round(total / chunks.length);
+  }
+
+  /* The whole of the chunk note, built from the chunks the run is about to critique, so
+     the sentence cannot describe a splitting the page did not do. */
+  function chunkNote(text, chunks) {
+    return 'This text is ' + count(codePointCount(text)) + ' characters, so each pass critiques it in ' +
+      count(chunks.length) + ' chunks of about ' + count(meanChunkChars(chunks)) + ' characters, cut at a sentence ' +
+      'end where there is one and at whitespace otherwise, never mid-word. Each chunk is ' +
+      'critiqued with the text that comes before it, so a sentence that starts a chunk is ' +
+      'still read as the start of a sentence. ' +
+      'The page hands control back to the browser between chunks, so it stays usable. Metrics are ' +
+      'measured on the whole draft, not summed over chunks. The rules that count how often a ' +
+      'word comes back report it once per draft, not once per chunk, so a chunked draft counts ' +
+      'them exactly as an unchunked one does. No text is dropped, but a finding never spans a ' +
+      'chunk boundary.';
+  }
+
   function shiftFinding(f, offset) {
     return {
       rule: f.rule, ruleName: f.ruleName, quote: f.quote, why: f.why, display: f.display,
@@ -1623,18 +1653,9 @@
       record.metrics0 = CL.metrics(raw);
       renderDraft0(raw, record.metrics0);
       if (chunked) {
-        var n = splitChunks(raw, CHUNK_TARGET).length;
-        record.chunks = n;
-        renderNote('This text is ' + count(codePointCount(raw)) + ' characters, so each pass critiques it in ' +
-          count(n) + ' chunks of about ' + count(CHUNK_TARGET) + ' characters, cut at a sentence ' +
-          'end where there is one and at whitespace otherwise, never mid-word. Each chunk is ' +
-          'critiqued with the text that comes before it, so a sentence that starts a chunk is ' +
-          'still read as the start of a sentence. ' +
-          'The page hands control back to the browser between chunks, so it stays usable. Metrics are ' +
-          'measured on the whole draft, not summed over chunks. The rules that count how often a ' +
-          'word comes back report it once per draft, not once per chunk, so a chunked draft counts ' +
-          'them exactly as an unchunked one does. No text is dropped, but a finding never spans a ' +
-          'chunk boundary.');
+        var noteChunks = splitChunks(raw, CHUNK_TARGET);
+        record.chunks = noteChunks.length;
+        renderNote(chunkNote(raw, noteChunks));
       }
     });
 
@@ -1714,6 +1735,8 @@
      without. */
   window.CriticLoopPage = {
     splitChunks: splitChunks,
+    meanChunkChars: meanChunkChars,
+    chunkNote: chunkNote,
     openFlags: openFlags,
     isApplicable: isApplicable,
     renderFinding: renderFinding,

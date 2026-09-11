@@ -157,7 +157,7 @@
       'appliedTotal', 'codePointCount', 'counterLabel', 'expandAllControl', 'isApplicable',
       'isBlankInput', 'longerThan', 'metricLine', 'metricsStrip', 'openFlags',
       'pairLongerThan', 'renderFinding', 'shortenForDisplay', 'shortenQuoteForDisplay',
-      'splitChunks', 'verdictLine'].sort());
+      'splitChunks', 'verdictLine', 'chunkNote', 'meanChunkChars'].sort());
   ok('app.js loaded without a page around it',
      window.CriticLoopPage && typeof window.CriticLoopPage.splitChunks === 'function');
   eq('the one global exports exactly the documented surface',
@@ -3214,6 +3214,111 @@
   record('the counter under the box on the same paste under 250 ms',
          hugeCounterMs < 250, '< 250 ms', hugeCounterMs.toFixed(1) + ' ms');
   eq('and it says what it should', hugeLabel, '10,000,000 characters');
+
+  /* ==================================================================== */
+  g('C18 the chunk note divides');
+  // C17 moved the chunk threshold to code points and made the note's total a code-point
+  // count, and left the note's *size* as CHUNK_TARGET, which is the splitter's target in
+  // UTF-16 units. The sentence stopped being arithmetic: 6,001 code points of emoji prose
+  // rendered "This text is 6,001 characters, so each pass critiques it in 4 chunks of
+  // about 3,000 characters" — 4 x 3,000 = 12,000 against a total of 6,001. The size the
+  // note prints is now the mean of the chunks the splitter actually returned, counted the
+  // way the total is counted. The splitter still cuts in units; that is deliberate and
+  // untouched, which is exactly why the note may not quote its target.
+  var EMO3 = '😀';
+  function rep3(str, n) { return new Array(n + 1).join(str); }
+  function unComma(x) { return Number(String(x).replace(/,/g, '')); }
+  var NOTE_HEAD_RE =
+    /^This text is ([\d,]+) characters, so each pass critiques it in ([\d,]+) chunks of about ([\d,]+) characters, cut at a sentence /;
+  function noteNumbers(text) {
+    var m = NOTE_HEAD_RE.exec(P.chunkNote(text, P.splitChunks(text, CHUNK_TARGET)));
+    return m ? [unComma(m[1]), unComma(m[2]), unComma(m[3])] : null;
+  }
+
+  // --- the mean itself ----------------------------------------------------
+  eq('no chunks is no size, and the function does not divide by nothing',
+     [P.meanChunkChars([]), P.meanChunkChars(null)], [0, 0]);
+  eq('one chunk of ASCII is its own length', P.meanChunkChars([{ text: rep3('a', 2731) }]), 2731);
+  eq('the mean counts code points, not the units they are stored in',
+     P.meanChunkChars([{ text: rep3(EMO3, 300) }, { text: rep3(EMO3, 100) }]), 200);
+  eq('and it rounds, because a last chunk is whatever is left',
+     [P.meanChunkChars([{ text: rep3('a', 2000) }, { text: rep3('a', 2000) },
+                        { text: rep3('a', 2000) }, { text: 'a' }]),
+      P.meanChunkChars([{ text: rep3('a', 3) }, { text: rep3('a', 4) }])],
+     [1500, 4]);
+
+  // --- the paste from the report -------------------------------------------
+  var EMOJI_PROSE = rep3(EMO3 + ' ', 3000) + EMO3;
+  eq('the reported paste is 9,002 UTF-16 units and 6,001 characters',
+     [EMOJI_PROSE.length, P.codePointCount(EMOJI_PROSE)], [9002, 6001]);
+  ok('it is past the chunk threshold, so the page announces a note for it',
+     P.longerThan(EMOJI_PROSE, P.CHUNK_THRESHOLD) === true);
+  var EMOJI_NUMS = noteNumbers(EMOJI_PROSE);
+  ok('the note is the sentence this group parses', EMOJI_NUMS !== null);
+  eq('its total is the count the counter under the box gives',
+     EMOJI_NUMS && EMOJI_NUMS[0], 6001);
+  eq('its count is the number of chunks the splitter returns',
+     EMOJI_NUMS && EMOJI_NUMS[1], P.splitChunks(EMOJI_PROSE, CHUNK_TARGET).length);
+  ok('and its size is no longer the splitter’s 3,000-unit target',
+     EMOJI_NUMS && EMOJI_NUMS[2] !== 3000);
+  record('the reported sentence divides: count x size is the total, give or take the rounding',
+         EMOJI_NUMS && Math.abs(EMOJI_NUMS[1] * EMOJI_NUMS[2] - EMOJI_NUMS[0]) <= EMOJI_NUMS[1] / 2,
+         'within ' + (EMOJI_NUMS ? EMOJI_NUMS[1] / 2 : '?'),
+         EMOJI_NUMS ? Math.abs(EMOJI_NUMS[1] * EMOJI_NUMS[2] - EMOJI_NUMS[0]) : 'no note');
+  ok('the sentence it replaced did not: 4 x 3,000 is 12,000 against 6,001',
+     EMOJI_NUMS && Math.abs(EMOJI_NUMS[1] * 3000 - EMOJI_NUMS[0]) > EMOJI_NUMS[1] / 2);
+
+  // --- every shape of long draft the suite has ------------------------------
+  var NOTE_TEXTS = [
+    ['ASCII prose', (function () {
+      var unit = 'The team leveraged a robust solution to synergise the deliverable. ';
+      var s = '';
+      while (s.length < 7000) s += unit;
+      return s.slice(0, 7000);
+    })()],
+    ['the emoji paste', EMOJI_PROSE],
+    ['emoji prose with words in it', (function () {
+      var unit = 'We shipped it ' + EMO3 + ' and the team was pleased ' + EMO3 + '. ';
+      var s = '';
+      while (P.codePointCount(s) < 9000) s += unit;
+      return s;
+    })()],
+    ['a draft one character past the threshold', rep3('a ', 3000) + rep3(EMO3, 4501)],
+    ['one long unbroken word', rep3('x', 12000)]
+  ];
+  NOTE_TEXTS.forEach(function (row) {
+    var nums = noteNumbers(row[1]);
+    var chunks = P.splitChunks(row[1], CHUNK_TARGET);
+    var summed = chunks.reduce(function (a, c) { return a + P.codePointCount(c.text); }, 0);
+    record('the note on ' + row[0] + ' states a total the counter agrees with',
+           nums && nums[0] === P.codePointCount(row[1]), P.codePointCount(row[1]),
+           nums ? nums[0] : 'no note');
+    record('the note on ' + row[0] + ' states the count the splitter produced',
+           nums && nums[1] === chunks.length, chunks.length, nums ? nums[1] : 'no note');
+    record('the note on ' + row[0] + ' states a size that is the mean of those chunks',
+           nums && nums[2] === P.meanChunkChars(chunks), P.meanChunkChars(chunks),
+           nums ? nums[2] : 'no note');
+    record('the note on ' + row[0] + ' divides: count x size is the total',
+           nums && Math.abs(nums[1] * nums[2] - nums[0]) <= nums[1] / 2,
+           'within ' + (nums ? nums[1] / 2 : '?'),
+           nums ? Math.abs(nums[1] * nums[2] - nums[0]) : 'no note');
+    record('the chunks of ' + row[0] + ' hold every character of it and no more',
+           summed === P.codePointCount(row[1]), P.codePointCount(row[1]), summed);
+  });
+
+  // --- the rest of the note is the note that shipped -------------------------
+  var ASCII_NOTE = P.chunkNote(NOTE_TEXTS[0][1], P.splitChunks(NOTE_TEXTS[0][1], CHUNK_TARGET));
+  eq('everything after the three numbers is untouched',
+     ASCII_NOTE.slice(ASCII_NOTE.indexOf('cut at a sentence ')),
+     'cut at a sentence end where there is one and at whitespace otherwise, never mid-word. ' +
+     'Each chunk is critiqued with the text that comes before it, so a sentence that starts ' +
+     'a chunk is still read as the start of a sentence. The page hands control back to the ' +
+     'browser between chunks, so it stays usable. Metrics are measured on the whole draft, ' +
+     'not summed over chunks. The rules that count how often a word comes back report it ' +
+     'once per draft, not once per chunk, so a chunked draft counts them exactly as an ' +
+     'unchunked one does. No text is dropped, but a finding never spans a chunk boundary.');
+  ok('a one-chunk text would state its own length as the size',
+     unComma(NOTE_HEAD_RE.exec(P.chunkNote('hello there', [{ text: 'hello there' }]))[3]) === 11);
 
   /* ==================================================================== */
   g('performance');

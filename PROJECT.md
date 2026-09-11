@@ -47,14 +47,15 @@ tests.html   critic.js's own suite in a page. Every rule gets a case that fires 
 
 The engine is separated from the page precisely so `tests.html` can drive it without a DOM, and
 so live mode is a swap of one async function rather than a second code path through the UI. app.js
-adds exactly one global, `window.CriticLoopPage`, and it carries twenty-five keys: `splitChunks`,
+adds exactly one global, `window.CriticLoopPage`, and it carries twenty-seven keys: `splitChunks`,
+`meanChunkChars`, `chunkNote`,
 `openFlags`, `isApplicable`, `renderFinding`, `expandAllControl`, `metricsStrip`, `metricLine`,
 `shortenForDisplay`, `shortenQuoteForDisplay`, `counterLabel`, `codePointCount`, `longerThan`,
 `pairLongerThan`, `isBlankInput`, `appliedTotal`, `verdictLine`, `apiErrorMessage`, `METRIC_ROWS`,
 `METRIC_SEP`, `FINDINGS_OPEN_CAP`, `API_ERROR_CHARS`, `DRAFT_DISPLAY_CHARS`, `QUOTE_DISPLAY_CHARS`,
 `CHUNK_THRESHOLD`, `DIFF_CHAR_LIMIT`. It was one key when this paragraph was written, was widened in
 increment 3 by the commit that made the suite assert the page's decisions instead of only the
-engine's, and has widened twice since — every time because a fix was only testable through it.
+engine's, and has widened three times since — every time because a fix was only testable through it.
 `tests.html` asserts that exact list, so it cannot widen again unnoticed. Nothing on the page reads
 the object, and app.js's wiring stands down when there is no page around it.
 
