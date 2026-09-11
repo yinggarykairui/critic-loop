@@ -152,9 +152,11 @@
   })(), ['CriticLoopPage']);
   eq('and it exports exactly the page surface this suite drives',
      Object.keys(window.CriticLoopPage || {}).sort(),
-     ['API_ERROR_CHARS', 'FINDINGS_OPEN_CAP', 'METRIC_ROWS', 'apiErrorMessage',
-      'appliedTotal', 'expandAllControl', 'isApplicable', 'metricLine', 'metricsStrip',
-      'openFlags', 'renderFinding', 'splitChunks', 'verdictLine'].sort());
+     ['API_ERROR_CHARS', 'DRAFT_DISPLAY_CHARS', 'FINDINGS_OPEN_CAP', 'METRIC_ROWS',
+      'QUOTE_DISPLAY_CHARS', 'apiErrorMessage', 'appliedTotal', 'counterLabel',
+      'expandAllControl', 'isApplicable', 'metricLine', 'metricsStrip', 'openFlags',
+      'renderFinding', 'shortenForDisplay', 'shortenQuoteForDisplay', 'splitChunks',
+      'verdictLine'].sort());
   ok('app.js loaded without a page around it',
      window.CriticLoopPage && typeof window.CriticLoopPage.splitChunks === 'function');
   eq('the one global exports exactly the documented surface',
@@ -2802,6 +2804,118 @@
 
   eq('a missing metrics record still exports the one word it always did', ML(null, null), 'n/a');
   eq('and an absent prev is the same as no prev', ML(ALMOST_BEFORE), ML(ALMOST_BEFORE, null));
+
+  /* ==================================================================== */
+  g('C14 the counters count characters, not UTF-16 units');
+  // clipApiError already counts in code points, and its comment argues the case. Three more
+  // user-facing counters did not: the draft cap, the quote cap and the counter under the
+  // box all printed UTF-16 lengths, and the draft cap also cut inside a surrogate pair.
+  var EMO = '\ud83d\ude00';                       /* one character, two UTF-16 units */
+  function cps(str) { return Array.from(String(str)).length; }
+  function rep(str, n) { return new Array(n + 1).join(str); }
+  function loneSurrogate(str) {
+    var t = String(str), i, c, n;
+    for (i = 0; i < t.length; i++) {
+      c = t.charCodeAt(i);
+      if (c >= 0xd800 && c <= 0xdbff) {
+        n = t.charCodeAt(i + 1);
+        if (!(n >= 0xdc00 && n <= 0xdfff)) return true;
+        i++;
+      } else if (c >= 0xdc00 && c <= 0xdfff) return true;
+    }
+    return false;
+  }
+
+  // --- the counter under the textarea ------------------------------------
+  eq('the shipped caps are the ones this group drives',
+     [P.DRAFT_DISPLAY_CHARS, P.QUOTE_DISPLAY_CHARS], [6000, 400]);
+  eq('50 emoji are 50 characters, not 100', P.counterLabel(rep(EMO, 50)), '50 characters');
+  eq('one emoji is one character, in the singular', P.counterLabel(EMO), '1 character');
+  eq('an empty box is nought', P.counterLabel(''), '0 characters');
+  eq('and a missing value is too', P.counterLabel(null), '0 characters');
+  eq('the counter still groups thousands', P.counterLabel(rep(EMO, 1500)), '1,500 characters');
+  eq('a plain ASCII paste is unchanged', P.counterLabel('hello'), '5 characters');
+  eq('a combining mark is counted as the units it is stored as, which is what it is',
+     P.counterLabel('e\u0301'), '2 characters');
+
+  // --- the 6,000-character draft cap -------------------------------------
+  // 'A' + 3,000 emoji: 6,001 UTF-16 units, 3,001 characters. The note used to say
+  // "Showing the first 6,000 of 6,001 characters" about a draft a reader counts 3,001 of,
+  // and the rendered text ended on a lone high surrogate — U+FFFD on screen.
+  var BIG = 'A' + rep(EMO, 3000);
+  var BIG_OUT = P.shortenForDisplay(BIG, P.DRAFT_DISPLAY_CHARS);
+  ok('a 3,001-character draft is under the 6,000 cap and is not cut at all',
+     BIG_OUT.truncated === false && BIG_OUT.text === BIG);
+  eq('and the number it would print is the one a reader counts', BIG_OUT.total, 3001);
+
+  // The boundary, in code points: at the cap, one under, one over.
+  var AT = rep(EMO, 10), UNDER = rep(EMO, 9), OVER = rep(EMO, 11);
+  eq('exactly at the cap: nothing is cut', P.shortenForDisplay(AT, 10).truncated, false);
+  eq('and the total is the character count', P.shortenForDisplay(AT, 10).total, 10);
+  eq('one under the cap: nothing is cut', P.shortenForDisplay(UNDER, 10).truncated, false);
+  eq('one over the cap: it is cut', P.shortenForDisplay(OVER, 10).truncated, true);
+  eq('to exactly cap characters', cps(P.shortenForDisplay(OVER, 10).text), 10);
+  eq('and the total is the character count, not the unit count',
+     P.shortenForDisplay(OVER, 10).total, 11);
+  ok('the cut never leaves half a character behind',
+     !loneSurrogate(P.shortenForDisplay(OVER, 10).text));
+  // An odd cap is where a unit-counting cut always split a pair.
+  [1, 3, 5, 7, 9, 11, 13].forEach(function (lim) {
+    var out = P.shortenForDisplay(rep(EMO, 20), lim);
+    record('a cap of ' + lim + ' cuts ' + lim + ' whole characters',
+           cps(out.text) === lim && !loneSurrogate(out.text) && out.total === 20,
+           lim + ' whole', cps(out.text) + ' / lone: ' + loneSurrogate(out.text));
+  });
+  ok('an astral character straddling the cap is left out whole, not halved',
+     P.shortenForDisplay('ab' + EMO + 'cd', 3).text === 'ab' + EMO);
+
+  // --- the quoted-span cap -----------------------------------------------
+  // A 504-character emoji sentence printed "Showing the first 400 of 552 characters"
+  // beside a quote a reader counts 368 of: three numbers, none of them the one on screen.
+  function quoteWords(n) {
+    var out = [];
+    for (var i = 0; i < n; i++) out.push(EMO + EMO + EMO);
+    return out.join(' ');
+  }
+  var SPAN = quoteWords(150);                     /* 150 words of 3 characters + 149 spaces */
+  eq('the span is 599 characters and 1,049 UTF-16 units', [cps(SPAN), SPAN.length], [599, 1049]);
+  var Q = P.shortenQuoteForDisplay(SPAN, P.QUOTE_DISPLAY_CHARS);
+  eq('the note\u2019s total is what a reader counts', Q.total, 599);
+  eq('the note\u2019s shown is what is on screen, less the ellipsis',
+     Q.shown, cps(Q.text) - 1);
+  ok('shown never overstates the cap', Q.shown <= P.QUOTE_DISPLAY_CHARS);
+  ok('the quote ends in an ellipsis', Q.text.slice(-1) === '\u2026');
+  ok('and carries no half characters', !loneSurrogate(Q.text));
+  ok('the cut still falls on a word boundary',
+     Q.text.slice(0, -1).slice(-1) !== ' ' && SPAN.indexOf(Q.text.slice(0, -1)) === 0);
+
+  // The boundary again, on the quote cap.
+  eq('a span exactly at the cap is not clipped',
+     P.shortenQuoteForDisplay(rep(EMO, 10), 10).truncated, false);
+  eq('and reports itself as ten characters, not twenty',
+     [P.shortenQuoteForDisplay(rep(EMO, 10), 10).total,
+      P.shortenQuoteForDisplay(rep(EMO, 10), 10).shown], [10, 10]);
+  eq('one under, likewise', P.shortenQuoteForDisplay(rep(EMO, 9), 10).total, 9);
+  var Q_OVER = P.shortenQuoteForDisplay(rep(EMO, 11), 10);
+  ok('one over is clipped', Q_OVER.truncated === true);
+  eq('its total is eleven characters', Q_OVER.total, 11);
+  ok('a span with no space inside the cap falls back to a hard cut of whole characters',
+     cps(Q_OVER.text) - 1 === 10 && !loneSurrogate(Q_OVER.text));
+  eq('and shown is that hard cut, counted the same way', Q_OVER.shown, 10);
+  // Every odd cap over a run of astral characters, where a unit cut always split one.
+  [1, 3, 5, 7, 9, 11, 13].forEach(function (lim) {
+    var out = P.shortenQuoteForDisplay(rep(EMO, 30), lim);
+    record('a quote cap of ' + lim + ' leaves no half character',
+           !loneSurrogate(out.text) && out.shown === lim && out.total === 30,
+           'clean at ' + lim, out.shown + ' / lone: ' + loneSurrogate(out.text));
+  });
+  // ASCII behaviour is exactly what it was: the word walk, the trailing space, the total.
+  var ASCII = 'the parser reads a file and writes the bytes out to the disk in one go';
+  var QA = P.shortenQuoteForDisplay(ASCII, 20);
+  eq('an ASCII quote still cuts back to the last space', QA.text, 'the parser reads a\u2026');
+  eq('shown is the length of what is on screen', QA.shown, 18);
+  eq('and total is the whole span', QA.total, ASCII.length);
+  eq('a short ASCII quote is untouched', P.shortenQuoteForDisplay('short', 20).text, 'short');
 
   /* ==================================================================== */
   g('performance');

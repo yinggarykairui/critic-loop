@@ -135,10 +135,17 @@
     return out;
   }
 
+  /* The cut and both numbers beside it count the way clipApiError already counts, and for
+     the same reason: a character is what a reader counts, not the UTF-16 unit it is stored
+     as. Cutting on units got both halves wrong at once — 'A' + one emoji 3,000 times is
+     3,001 characters and the note read "Showing the first 6,000 of 6,001 characters", and
+     the cut at unit 6,000 landed inside a surrogate pair, so the panel ended on half an
+     emoji. Slicing code points cuts between characters and prints the numbers on the page. */
   function shortenForDisplay(text, limit) {
     var t = String(text == null ? '' : text);
-    if (t.length <= limit) return { text: t, truncated: false, total: t.length };
-    return { text: t.slice(0, limit), truncated: true, total: t.length };
+    var chars = codePoints(t);
+    if (chars.length <= limit) return { text: t, truncated: false, total: chars.length };
+    return { text: chars.slice(0, limit).join(''), truncated: true, total: chars.length };
   }
 
   /* A quoted span is capped like every other long thing on this page, but a quote cut
@@ -147,17 +154,26 @@
      line: the elision is on screen, in the quote itself. shown is how many characters of
      the source are on screen, which is what the note beside the quote states — it is the
      length after the word-boundary walk, not the cap. A span with no space inside the cap
-     falls back to a hard cut, without splitting a surrogate pair. */
+     falls back to a hard cut.
+
+     The walk and both printed numbers run over code points, the same count clipApiError
+     uses. On units the surrogate guard stopped the cut splitting a pair, but the numbers
+     were still UTF-16 lengths: a 504-character span of emoji prose printed "Showing the
+     first 400 of 552 characters" beside a quote a reader counts 368 of. Walking the code
+     points makes the note the count on the page, and makes the split impossible rather
+     than guarded against after the fact. */
   function shortenQuoteForDisplay(text, limit) {
     var t = String(text == null ? '' : text);
-    if (t.length <= limit) return { text: t, truncated: false, total: t.length, shown: t.length };
+    var chars = codePoints(t);
+    if (chars.length <= limit) {
+      return { text: t, truncated: false, total: chars.length, shown: chars.length };
+    }
     var end = limit;
-    while (end > 0 && !/\s/.test(t.charAt(end))) end--;
-    var head = (end > 0 ? t.slice(0, end) : t.slice(0, limit)).replace(/\s+$/, '');
-    if (!head) head = t.slice(0, limit);
-    var last = head.charCodeAt(head.length - 1);
-    if (last >= 0xd800 && last <= 0xdbff) head = head.slice(0, -1);
-    return { text: head + '\u2026', truncated: true, total: t.length, shown: head.length };
+    while (end > 0 && !/\s/.test(chars[end])) end--;
+    var head = (end > 0 ? chars.slice(0, end) : chars.slice(0, limit)).join('').replace(/\s+$/, '');
+    if (!head) head = chars.slice(0, limit).join('');
+    return { text: head + '\u2026', truncated: true, total: chars.length,
+             shown: codePoints(head).length };
   }
 
   /* ---------- keeping the loop on screen ----------
@@ -275,9 +291,16 @@
     return node ? node.textContent.trim() : '';
   }
 
+  /* The counter under the box counts characters the way the three display caps count them:
+     a paste of 50 emoji is 50 characters, and used to read "100 characters". The label is
+     its own function so the suite can read it with no page around it. */
+  function counterLabel(value) {
+    var n = codePoints(String(value == null ? '' : value)).length;
+    return n === 1 ? '1 character' : count(n) + ' characters';
+  }
+
   function updateCounter() {
-    var n = els.input.value.length;
-    els.counter.textContent = n === 1 ? '1 character' : count(n) + ' characters';
+    els.counter.textContent = counterLabel(els.input.value);
   }
 
   /* ---------- the verdict ----------
@@ -1593,12 +1616,17 @@
     expandAllControl: expandAllControl,
     metricsStrip: metricsStrip,
     metricLine: metricLine,
+    shortenForDisplay: shortenForDisplay,
+    shortenQuoteForDisplay: shortenQuoteForDisplay,
+    counterLabel: counterLabel,
     appliedTotal: appliedTotal,
     verdictLine: verdictLine,
     apiErrorMessage: apiErrorMessage,
     METRIC_ROWS: METRIC_ROWS,
     FINDINGS_OPEN_CAP: FINDINGS_OPEN_CAP,
-    API_ERROR_CHARS: API_ERROR_CHARS
+    API_ERROR_CHARS: API_ERROR_CHARS,
+    DRAFT_DISPLAY_CHARS: DRAFT_DISPLAY_CHARS,
+    QUOTE_DISPLAY_CHARS: QUOTE_DISPLAY_CHARS
   };
 
   /* ---------- wiring ----------
