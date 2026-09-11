@@ -70,8 +70,10 @@ lenses only know English, and that is the whole of the warning. One you only get
 transport has never been run. Not against a real key,
 because this project holds none — and not against a mock either: there is no fake `fetch` anywhere in
 the suite. What is asserted is the formatting *around* the transport, which is the part that does not
-need one — `apiErrorMessage` and the error-body cap at 299, 300 and 301 characters, 22 assertions of
-it. The `fetch` call itself, the lenient JSON parse that reads a
+need one — `apiErrorMessage` and the error-body cap at 299, 300 and 301 characters. That is 25
+assertions, counting an assertion as one of them when `apiErrorMessage` runs while its arguments are
+being built; they sit in a block of 32, the other seven checking the cap constant and the lengths
+those calls are made with. The `fetch` call itself, the lenient JSON parse that reads a
 non-conforming reply, and the `AbortController` behind Stop have no test of their own. Every other
 claim on this page is one you can check by opening the file; this is the one you have to take on
 trust, so it is stated at full size.
