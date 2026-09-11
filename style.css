@@ -621,8 +621,17 @@ textarea.is-locked { background: var(--disabled-bg); cursor: default; }
      complaint. It costs a second line only on the rows that would otherwise lose letters,
      and the quote below it keeps the full width it was given. */
   .rule-name { white-space: normal; overflow-wrap: anywhere; }
+  /* Sized to its content here as well. flex: 1 1 100% gave the quote the whole line
+     whatever was in it, so at 320 px every closed quote measured exactly 250 px and at
+     390 px exactly 320 px: "holistic" got the same box as "at this point in time", and
+     14 of 21 findings read as a column of identical empty input fields. width: max-content
+     with a 100 % ceiling shrink-wraps a short span and still hands a long one the full
+     line — its content is wider than the line, so it wraps below the rule name and is
+     clamped there, which is the width this rule was added to give it. */
   .finding:not([open]) > summary .quote {
-    flex: 1 1 100%;
+    flex: 0 1 auto;
+    width: max-content;
+    max-width: 100%;
     margin: 0.15rem 0 0 0.6rem;
   }
 }
