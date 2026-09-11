@@ -618,15 +618,24 @@ textarea.is-locked { background: var(--disabled-bg); cursor: default; }
      for the quotes that did not fit, so whether a closed quote started at the panel edge
      or halfway across the row depended on how long that quote happened to be: one panel
      of Bloated corporate at 390 px ran its boxes down x = 41, 120, 230, 41, 178 — a
-     column with no column, on a rule invisible from outside the stylesheet. The summary
-     is a block here, as it already is when the finding is open, so the name and its tag
-     hold the first line and the quote starts the second one at the same x in every row.
-     Open and closed then differ in what they show, not in where the quote begins. */
-  .finding:not([open]) > summary { display: block; }
-  .finding:not([open]) > summary .finding-tag {
-    display: inline-block;
-    vertical-align: 1px;
-    margin-left: 0.35rem;
+     column with no column, on a rule invisible from outside the stylesheet. Every closed
+     row is two lines here now, and the quote starts the second of them at the same x
+     whatever is in it. */
+  .finding:not([open]) > summary { flex-wrap: wrap; }
+  .finding:not([open]) > summary .rule-name { flex: 0 1 auto; min-width: 0; }
+  /* The break: an empty full-width flex item between the labels and the quote. The marker,
+     the rule name and the tag keep the default order and hold the first line; this takes
+     the whole of the next one and is 0 px tall; the quote is ordered after it and so
+     always starts a line of its own. Making the summary a block would do the same and cost
+     less markup, but then the tag's own left margin starts a line too — at 320 px with
+     200 % text zoom that pushed "pointer only" 11 px past the panel's content box. Inside
+     a flex line an item that begins the line gets no leading gap, which is the behaviour
+     this keeps. */
+  .finding:not([open]) > summary::after {
+    content: "";
+    flex: 0 0 100%;
+    height: 0;
+    order: 1;
   }
   /* The name wraps here instead of clipping. At 320 px it fits on one line and this
      changes nothing; at 320 px with 200 % text zoom the line holds 204 px of a name that
@@ -639,10 +648,11 @@ textarea.is-locked { background: var(--disabled-bg); cursor: default; }
      390 px exactly 320 px: "holistic" got the same box as "at this point in time", and
      14 of 21 findings read as a column of identical empty input fields. width: max-content
      with a 100 % ceiling shrink-wraps a short span and still hands a long one the full
-     line. It is a block on its own line now rather than a flex item that may or may not
-     wrap, so the box hugs its text and every box starts at the same x. */
+     line — its content is wider than the line, so it is clamped there, which is the width
+     this rule was added to give it. `order` is what puts it after the break. */
   .finding:not([open]) > summary .quote {
-    display: block;
+    order: 2;
+    flex: 0 1 auto;
     width: max-content;
     max-width: 100%;
     margin: 0.15rem 0 0 0.6rem;
