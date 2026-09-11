@@ -1043,13 +1043,24 @@
      identically before and after a pass the same file records as "Applied: 3 of 3". Mean
      sentence is dropped exactly where the strip drops it — oneSentenceThroughout, against
      the same prev the strip was given — because for a one-sentence draft it is the word
-     count again, in a second column. */
+     count again, in a second column.
+
+     It walks METRIC_ROWS, which is the list the strip walks, rather than a second copy of
+     the column names kept beside it. The copy had already drifted: day 047 put the units
+     on the strip's two mean columns to close a defect where nothing said what the column
+     measured, and the export went on writing "mean sentence 15.0, mean word 4.4" — the
+     ambiguity closed on screen and left in the artifact that outlives the page. Adding a
+     column, renaming one or changing what it prints now reaches both renderings or
+     neither. */
   function metricLine(m, prev) {
     if (!m) return 'n/a';
-    var parts = ['words ' + num(m.words), 'sentences ' + num(m.sentences)];
-    if (!oneSentenceThroughout(m, prev)) parts.push('mean sentence ' + num1(m.meanSentenceLength));
-    parts.push('mean word ' + num1(m.meanWordLength));
-    parts.push('hedges ' + num(m.hedges));
+    var drop = oneSentenceThroughout(m, prev), parts = [], i, row, cur;
+    for (i = 0; i < METRIC_ROWS.length; i++) {
+      row = METRIC_ROWS[i];
+      if (row.key === 'meanSentenceLength' && drop) continue;
+      cur = (typeof m[row.key] === 'number') ? m[row.key] : 0;
+      parts.push(row.label + ' ' + (row.mean ? num1 : num)(cur));
+    }
     return parts.join(', ');
   }
 
