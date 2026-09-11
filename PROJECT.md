@@ -45,20 +45,19 @@ tests.html   critic.js's own suite in a page. Every rule gets a case that fires 
              proves only the copy.
 ```
 
-The engine is separated from the page precisely so `tests.html` can drive it without a DOM, and
-so live mode is a swap of one async function rather than a second code path through the UI. app.js
-adds exactly one global, `window.CriticLoopPage`, and it carries twenty-eight keys: `splitChunks`,
-`meanChunkChars`, `chunkNote`,
-`openFlags`, `isApplicable`, `renderFinding`, `expandAllControl`, `metricsStrip`, `metricLine`,
-`shortenForDisplay`, `shortenQuoteForDisplay`, `counterLabel`, `liveOverLimitMessage`,
-`codePointCount`, `longerThan`,
-`pairLongerThan`, `isBlankInput`, `appliedTotal`, `verdictLine`, `apiErrorMessage`, `METRIC_ROWS`,
-`METRIC_SEP`, `FINDINGS_OPEN_CAP`, `API_ERROR_CHARS`, `DRAFT_DISPLAY_CHARS`, `QUOTE_DISPLAY_CHARS`,
-`CHUNK_THRESHOLD`, `DIFF_CHAR_LIMIT`. It was one key when this paragraph was written, was widened in
-increment 3 by the commit that made the suite assert the page's decisions instead of only the
-engine's, and has widened three times since — every time because a fix was only testable through it.
-`tests.html` asserts that exact list, so it cannot widen again unnoticed. Nothing on the page reads
-the object, and app.js's wiring stands down when there is no page around it.
+The engine is separated from the page precisely so `tests.html` can drive it without a DOM, and so
+live mode is a swap of one async function rather than a second code path through the UI. app.js adds
+exactly one global, `window.CriticLoopPage`, and it carries twenty-eight keys: `splitChunks`,
+`meanChunkChars`, `chunkNote`, `openFlags`, `isApplicable`, `renderFinding`, `expandAllControl`,
+`metricsStrip`, `metricLine`, `shortenForDisplay`, `shortenQuoteForDisplay`, `counterLabel`,
+`liveOverLimitMessage`, `codePointCount`, `longerThan`, `pairLongerThan`, `isBlankInput`,
+`appliedTotal`, `verdictLine`, `apiErrorMessage`, `METRIC_ROWS`, `METRIC_SEP`, `FINDINGS_OPEN_CAP`,
+`API_ERROR_CHARS`, `DRAFT_DISPLAY_CHARS`, `QUOTE_DISPLAY_CHARS`, `CHUNK_THRESHOLD`,
+`DIFF_CHAR_LIMIT`. It was one key when this paragraph was written, was widened in increment 3 by the
+commit that made the suite assert the page's decisions instead of only the engine's, and has widened
+four times since — every time because a fix was only testable through it. `tests.html` asserts that
+exact list, so it cannot widen again unnoticed. Nothing on the page reads the object, and app.js's
+wiring stands down when there is no page around it.
 
 ## Done-map
 
@@ -152,10 +151,12 @@ Increment 2 (day 047) — items and states:
 
 ### Increment 5 — evening polish (2026-09-10 evening shift)
 
-The evening ran its three cycles on the day-047 ship, `3b73c74`, and left seventeen commits
-in two batches, one per defect list a critic pass produced. Commit timestamps run past
-midnight into 2026-09-11 UTC; `git log --oneline 3b73c74..HEAD` is the list. Nothing was
-added to scope: every commit closes a defect that was reported before it was written.
+The evening ran its three cycles on the day-047 ship, `3b73c74`, and left twenty-one
+commits: seventeen in two batches, one per defect list a critic pass produced, and four
+more closing one must-pass defect the second batch had itself created. Commit timestamps
+run past midnight into 2026-09-11 UTC; `git log --oneline 3b73c74..HEAD` is the list.
+Nothing was added to scope: every commit closes a defect that was reported before it was
+written.
 
 The first seven commits, `73887d1` … `83e58bc`, close the first defect list:
 
@@ -206,7 +207,8 @@ The last ten, `5da8790` … this commit, close the second:
       counts".
 - [x] F2 `README.md`: the live-mode paragraph said "22 assertions of it" and the number
       was wrong. It says 25, names the rule it was counted by, and gives the block's 32.
-- [x] `README.md`: the suite's size is the number `#headline` reports, 1,789.
+- [x] `README.md`: the suite's size is the number `#headline` reports — 1,789 at that
+      commit, 1,867 after the batch below.
 - [x] F7 docs: this block, and the exported-surface paragraph above, which said nineteen
       keys while the page carried twenty-five and said "twelve keys, and this file says
       so" in the present tense two lines below it.
@@ -214,6 +216,37 @@ The last ten, `5da8790` … this commit, close the second:
       asserted; the one CSS-only fix is measured with Playwright and quoted in its commit,
       because `tests.html` runs on `file://` and Chromium refuses `cssRules` on a sheet it
       considers cross-origin, so the suite cannot see `style.css` at all.
+
+The last four, `82f463e` … this commit, close one must-pass defect the batch above left
+behind: the code-point migration made two sentences on the page untrue, and the README
+sentence written to describe that migration was untrue about both of them.
+
+- [x] `app.js`: the chunk note reports the mean size of the chunks it actually produced,
+      counted in code points, rather than `CHUNK_TARGET`. The migration moved the note's
+      total to code points and left its size as the splitter's target in UTF-16 units, so
+      the sentence stopped being arithmetic: 6,001 code points of emoji prose (9,002
+      units) read "6,001 characters, so each pass critiques it in 4 chunks of about 3,000
+      characters" — 12,000 of chunk against a 6,001 total. It now reads 4 chunks of about
+      1,500. `splitChunks` and `CHUNK_TARGET` are untouched: the splitter still cuts in
+      units, deliberately, which is exactly why the note may not quote its target. Cost,
+      recorded: the figure moves on ASCII too, because it was never right there either —
+      a 7,000-character ASCII draft renders a run byte-identical in all 221 lines but that
+      one number, 3,000 → 2,333, where 3 × 3,000 had been 9,000 against a 7,000 total.
+- [x] `app.js`: live mode's over-length message states the draft and the cap in one unit
+      and names it. 6,500 emoji is 13,000 UTF-16 units, and the message read "That is
+      13,000 characters" in a status line under a counter reading "6,500 characters". The
+      test is still `raw.length > LIVE_MAX_INPUT`: moving it to code points would raise
+      what is actually sent to api.anthropic.com, which is a behaviour change and not a
+      wording fix. The clause that explains the gap prints only when there is a gap.
+- [x] `README.md`: the sentence that said every "characters" on the page is a code-point
+      count names the counts it is about instead, and records live mode's ceiling as the
+      one limit measured in storage units, because that number is a proxy for what goes
+      over the wire. The three examples it already gave are kept.
+- [x] surface: `meanChunkChars`, `chunkNote` and `liveOverLimitMessage` are exported, so
+      both sentences are asserted rather than eyeballed; the exported-surface paragraph
+      above and the list `tests.html` checks both say twenty-eight.
+- [x] `tests.html` green: 1,789 assertions → 1,867, in groups C18 and C19, and the two
+      documented figures move with it.
 
 ## Open threads
 
