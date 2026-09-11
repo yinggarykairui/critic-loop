@@ -429,6 +429,10 @@
   /* The two mean columns are read side by side and are not the same unit, so each names
      its own: mean sentence counts words, mean word counts characters. `mean` marks the
      columns that print a decimal even on a whole number. */
+  /* What separates one exported field from the next. It is a constant so the suite can
+     split the line on the same string the line was built with. */
+  var METRIC_SEP = ' · ';
+
   var METRIC_ROWS = [
     { key: 'words', label: 'words' },
     { key: 'sentences', label: 'sentences' },
@@ -1051,7 +1055,14 @@
      measured, and the export went on writing "mean sentence 15.0, mean word 4.4" — the
      ambiguity closed on screen and left in the artifact that outlives the page. Adding a
      column, renaming one or changing what it prints now reaches both renderings or
-     neither. */
+     neither.
+
+     Fields are separated by the page's own separator, " · " — the one that already
+     divides "Pass 2 · Draft 2" and "default · rules in this page · no network". They were
+     separated by ", " until 303bc2d taught num() to group thousands, after which one comma
+     did two jobs in the same line: "words 7,400, sentences 1,000, mean sentence (words)
+     7.4" leaves a reader to work out which commas end a field. The middle dot is not a
+     character any value on this line contains, and it survives Markdown untouched. */
   function metricLine(m, prev) {
     if (!m) return 'n/a';
     var drop = oneSentenceThroughout(m, prev), parts = [], i, row, cur;
@@ -1061,7 +1072,7 @@
       cur = (typeof m[row.key] === 'number') ? m[row.key] : 0;
       parts.push(row.label + ' ' + (row.mean ? num1 : num)(cur));
     }
-    return parts.join(', ');
+    return parts.join(METRIC_SEP);
   }
 
   function exportMarkdown(note) {
@@ -1709,6 +1720,7 @@
     verdictLine: verdictLine,
     apiErrorMessage: apiErrorMessage,
     METRIC_ROWS: METRIC_ROWS,
+    METRIC_SEP: METRIC_SEP,
     FINDINGS_OPEN_CAP: FINDINGS_OPEN_CAP,
     API_ERROR_CHARS: API_ERROR_CHARS,
     DRAFT_DISPLAY_CHARS: DRAFT_DISPLAY_CHARS,

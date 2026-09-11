@@ -153,7 +153,7 @@
   eq('and it exports exactly the page surface this suite drives',
      Object.keys(window.CriticLoopPage || {}).sort(),
      ['API_ERROR_CHARS', 'CHUNK_THRESHOLD', 'DIFF_CHAR_LIMIT', 'DRAFT_DISPLAY_CHARS',
-      'FINDINGS_OPEN_CAP', 'METRIC_ROWS', 'QUOTE_DISPLAY_CHARS', 'apiErrorMessage',
+      'FINDINGS_OPEN_CAP', 'METRIC_ROWS', 'METRIC_SEP', 'QUOTE_DISPLAY_CHARS', 'apiErrorMessage',
       'appliedTotal', 'codePointCount', 'counterLabel', 'expandAllControl', 'isApplicable',
       'isBlankInput', 'longerThan', 'metricLine', 'metricsStrip', 'openFlags',
       'pairLongerThan', 'renderFinding', 'shortenForDisplay', 'shortenQuoteForDisplay',
@@ -2763,7 +2763,7 @@
     return out;
   }
   function lineCols(m, prev) {
-    return ML(m, prev).split(', ').map(function (part) {
+    return ML(m, prev).split(P.METRIC_SEP).map(function (part) {
       return part.replace(/ [-−+±0-9.,→ ]+$/, '');
     });
   }
@@ -2774,17 +2774,17 @@
                        hedges: 0 };
   eq('the exported line carries the mean word column',
      ML(ALMOST_BEFORE, null),
-     'words 60, sentences 4, mean sentence (words) 15.0, mean word (chars) 4.4, hedges 0');
+     'words 60 · sentences 4 · mean sentence (words) 15.0 · mean word (chars) 4.4 · hedges 0');
   ok('so a pass that only moved mean word no longer exports twice the same line',
      ML(ALMOST_BEFORE, null) !== ML(ALMOST_AFTER, ALMOST_BEFORE));
   eq('and the number it moved to is the one the strip prints',
      ML(ALMOST_AFTER, ALMOST_BEFORE),
-     'words 60, sentences 4, mean sentence (words) 15.0, mean word (chars) 4.2, hedges 0');
+     'words 60 · sentences 4 · mean sentence (words) 15.0 · mean word (chars) 4.2 · hedges 0');
 
   // Both means keep their decimal, the way the strip's mean columns do — num1, not num.
   eq('a mean that lands on a whole number keeps its decimal in the export',
      ML({ words: 20, sentences: 2, meanSentenceLength: 10, meanWordLength: 5, hedges: 0 }, null),
-     'words 20, sentences 2, mean sentence (words) 10.0, mean word (chars) 5.0, hedges 0');
+     'words 20 · sentences 2 · mean sentence (words) 10.0 · mean word (chars) 5.0 · hedges 0');
   [[0.15, '0.2'], [0.35, '0.4'], [1.15, '1.2'], [9.95, '10.0'], [4.96, '5.0'], [5.04, '5.0']]
     .forEach(function (row) {
       var txt = ML({ words: 10, sentences: 2, meanSentenceLength: 5, meanWordLength: row[0],
@@ -2800,7 +2800,7 @@
   var CORP0 = { words: 75, sentences: 1, meanSentenceLength: 75, meanWordLength: 4.72, hedges: 0 };
   var CORP3 = { words: 51, sentences: 1, meanSentenceLength: 51, meanWordLength: 4.94, hedges: 0 };
   eq('a one-sentence draft drops mean sentence from the export too',
-     ML(CORP0, null), 'words 75, sentences 1, mean word (chars) 4.7, hedges 0');
+     ML(CORP0, null), 'words 75 · sentences 1 · mean word (chars) 4.7 · hedges 0');
   eq('the strip drops the same column for the same record',
      stripCols(CORP0, null), ['words', 'sentences', 'mean word (chars)', 'hedges']);
   eq('and the two renderings list the same columns in the same order',
@@ -2853,7 +2853,7 @@
   // A record missing a key exports the 0 the strip draws, not "undefined".
   eq('a metrics record with a missing column exports the same 0 the strip draws',
      ML({ words: 3, sentences: 2 }, null),
-     'words 3, sentences 2, mean sentence (words) 0.0, mean word (chars) 0.0, hedges 0');
+     'words 3 · sentences 2 · mean sentence (words) 0.0 · mean word (chars) 0.0 · hedges 0');
 
   eq('a missing metrics record still exports the one word it always did', ML(null, null), 'n/a');
   eq('and an absent prev is the same as no prev', ML(ALMOST_BEFORE), ML(ALMOST_BEFORE, null));
@@ -2999,7 +2999,33 @@
   // The exported line prints the same numbers in the same shape.
   eq('the exported line groups what the strip groups',
      P.metricLine(BIG_NOW, BIG_WAS),
-     'words 5,100, sentences 100, mean sentence (words) 51.0, mean word (chars) 4.9, hedges 0');
+     'words 5,100 · sentences 100 · mean sentence (words) 51.0 · mean word (chars) 4.9 · hedges 0');
+  // ...and one comma per line does one job. Once num() grouped thousands, ", " between the
+  // fields made the comma both the thousands separator and the field separator in the same
+  // line: "words 7,400, sentences 1,000, mean sentence (words) 7.4". The fields are now
+  // divided by the page's own separator, the one already in "Pass 2 · Draft 2".
+  eq('the exported fields are divided by the separator the page uses elsewhere',
+     P.METRIC_SEP, ' \u00b7 ');
+  var GROUPED = P.metricLine({ words: 7400, sentences: 1000, meanSentenceLength: 7.4,
+                               meanWordLength: 4.4, hedges: 1200 }, null);
+  eq('a line whose every number is grouped still splits into one field per column',
+     GROUPED.split(P.METRIC_SEP).length, P.METRIC_ROWS.length);
+  eq('and it reads like this',
+     GROUPED,
+     'words 7,400 \u00b7 sentences 1,000 \u00b7 mean sentence (words) 7.4 \u00b7 ' +
+     'mean word (chars) 4.4 \u00b7 hedges 1,200');
+  ok('every comma left in that line is inside a number',
+     /^(?:[^,]|(?<=\d),(?=\d{3}(?!\d)))*$/.test(GROUPED));
+  ok('no column name carries the separator or the comma',
+     P.METRIC_ROWS.every(function (r) {
+       return r.label.indexOf(P.METRIC_SEP.trim()) === -1 && r.label.indexOf(',') === -1;
+     }));
+  // The footer prints two of these lines either side of an arrow; the arrow still separates
+  // the pair and the dots still separate the fields.
+  ok('the footer pair is still two lines with one arrow between them',
+     (P.metricLine(BIG_NOW, BIG_WAS) + ' \u2192 ' + P.metricLine(BIG_WAS, BIG_NOW))
+       .split(' \u2192 ').length === 2);
+
   // Under a thousand nothing moves, and a mean keeps the one-decimal form it had.
   var SMALL = P.metricsStrip({ words: 41, sentences: 2, meanSentenceLength: 20.5,
                                meanWordLength: 4.94, hedges: 0 },
